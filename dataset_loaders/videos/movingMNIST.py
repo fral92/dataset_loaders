@@ -208,9 +208,10 @@ class MovingMNISTDataset(ThreadedDataset):
         labels, their subset (i.e. category, clip, prefix) and their
         filenames.
         """
-
-        X = self.get_batch()
-        Y = []
+        batch = self.get_batch()
+        X = batch
+        # Return last frame as label
+        Y = batch[self.seq_length-1]
         F = self.indices_
 
         ret = {}
