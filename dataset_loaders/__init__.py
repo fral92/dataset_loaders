@@ -14,6 +14,6 @@ from videos.change_detection import ChangeDetectionDataset  # noqa
 from videos.davis import DavisDataset  # noqa
 from videos.davis2017 import Davis2017Dataset # noqa
 from videos.gatech import GatechDataset  # noqa
-
+from videos.movingMNIST import MovingMNISTDataset # noqa
 __version__ = check_output('git rev-parse HEAD',
                            shell=True).strip().decode('ascii')
