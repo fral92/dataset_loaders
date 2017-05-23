@@ -75,7 +75,7 @@ class MovingMNISTDataset(ThreadedDataset):
         return np.maximum(a, b)
 
     def get_random_trajectory(self, batch_size):
-        length = self.seq_length
+        length = self.seq_length + 1
         canvas_size = self.image_size_ - np.max(self.digits_sizes_)
 
         # Initial position uniform random inside the box.
@@ -150,7 +150,7 @@ class MovingMNISTDataset(ThreadedDataset):
         # if self.background_ == 'zeros':
         data = np.zeros((self.batch_size_, self.num_channels_,
                          self.image_size_, self.image_size_,
-                         self.seq_length), dtype=np.float32)
+                         self.seq_length+1), dtype=np.float32)
         # elif self.background_ == 'rand':
         #     data = self._rng.rand(self.batch_size_, self.num_channels_,
         #                          self.image_size_, self.image_size_,
@@ -178,7 +178,7 @@ class MovingMNISTDataset(ThreadedDataset):
                 #                           dtype=np.float32)
 
                 # generate video
-                for i in xrange(self.seq_length):
+                for i in xrange(self.seq_length+1):
                     top = start_y[i, j * self.num_digits_ + n]
                     left = start_x[i, j * self.num_digits_ + n]
                     bottom = top + digit_size
@@ -209,9 +209,9 @@ class MovingMNISTDataset(ThreadedDataset):
         filenames.
         """
         batch = self.get_batch()
-        X = batch
+        X = batch[:self.seq_length]
         # Return last frame as label
-        Y = batch[self.seq_length-1]
+        Y = batch[self.seq_length]
         F = self.indices_
 
         ret = {}
