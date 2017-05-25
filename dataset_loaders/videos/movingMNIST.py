@@ -32,9 +32,9 @@ class MovingMNISTDataset(ThreadedDataset):
     # id in the original data
     _mask_labels = {}
 
-    def __init__(self, which_set='train', nvids=50000,
-                 image_size=64, num_digits=2, digits_sizes=[28, 28],
-                 digits_speed=0.3, change_dir_prob=[0.5, 0.5],
+    def __init__(self, which_set='train', nvids=1000,
+                 image_size=64, num_digits=1, digits_sizes=[28, 28],
+                 digits_speed=0.3, change_dir_prob=[0., 0.],
                  rng=None, seed=1, *args, **kwargs):
 
         self.data_shape = (image_size,) * 2 + (self.data_shape[2],)
@@ -216,7 +216,7 @@ class MovingMNISTDataset(ThreadedDataset):
 
         ret = {}
         ret['data'] = X
-        ret['labels'] = np.asarray(Y)
+        ret['labels'] = np.asarray(Y[np.newaxis, ...])
         ret['subset'] = []
         ret['filenames'] = np.array(F)
         return ret
