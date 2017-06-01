@@ -653,6 +653,14 @@ def random_transform(x, y=None,
         max_mask_value = np.max(cumulative_mask)
         max_rows, max_cols = np.where(cumulative_mask == max_mask_value)
 
+        # Choose if is a negative or positive shift
+        direction = np.random.choice([-1, 1])
+        left_shift = direction * np.random.randint(
+            smart_crop_w_shift_range)
+        crop_center_col += left_shift
+        smart_crop_top = max(0, crop_center_row - crop_size[0] // 2)
+        smart_crop_left = max(0, crop_center_col - crop_size[1] // 2)
+
     # Crop
     # Expects axes with shape (..., 0, 1)
     # TODO: Add center crop

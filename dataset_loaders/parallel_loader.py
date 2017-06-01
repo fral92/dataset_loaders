@@ -220,6 +220,9 @@ class ThreadedDataset(object):
             'repeat_first_optical_flow': True,
             'compute_optical_flow': False,
             'optical_flow_type': 'Farn',
+            'crop_mode': 'random',
+            'smart_crop_h_shift_range': 0,
+            'smart_crop_w_shift_range': 0,
             'rotation_range': 0,
             'width_shift_range': 0,
             'height_shift_range': 0,
@@ -256,6 +259,7 @@ class ThreadedDataset(object):
             self.data_augm_kwargs['crop_size'] = cs
             if self.data_augm_kwargs['crop_mode'] not in ['random', 'smart']:
                 raise NotImplementedError('`crop_mode` should be one of '
+                                          '{`random`, `smart`}')
                                           '{`random`, `smart`}')
 
         # Do not support multithread without shuffling
