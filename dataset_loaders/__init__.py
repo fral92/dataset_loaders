@@ -12,6 +12,7 @@ from images.scene_parsing_MIT import SceneParsingMITDataset  # noqa
 
 from videos.change_detection import ChangeDetectionDataset  # noqa
 from videos.davis import DavisDataset  # noqa
+from videos.davis2017 import Davis2017Dataset # noqa
 from videos.gatech import GatechDataset  # noqa
 
 __version__ = check_output('git rev-parse HEAD',
