@@ -44,8 +44,8 @@ class DavisDataset(ThreadedDataset):
             # Get file names for this set
             for root, dirs, files in os.walk(self.image_path):
                 for name in files:
-                        self._filenames.append(os.path.join(
-                          root[-root[::-1].index('/'):], name[:-3]))
+                    self._filenames.append(os.path.join(
+                      root[-root[::-1].index('/'):], name[:-3]))
 
             self._filenames.sort(key=natural_keys)
 
@@ -55,11 +55,18 @@ class DavisDataset(ThreadedDataset):
     def __init__(self,
                  which_set='train',
                  threshold_masks=False,
+                 optical_flow_type=None,
                  split=.75,
                  *args, **kwargs):
 
         self.which_set = which_set
+        self.optical_flow_type = optical_flow_type
+        self.optical_flow_path = None
         self.threshold_masks = threshold_masks
+
+        if optical_flow_type is not None:
+            if optical_flow_type not in ['Brox', 'Farn', 'LK', 'TVL1']:
+                raise RuntimeError('Unknown optical flow type')
 
         # Prepare data paths
         if 'train' in self.which_set or 'val' in self.which_set:
@@ -70,11 +77,19 @@ class DavisDataset(ThreadedDataset):
             self.mask_path = os.path.join(self.path,
                                           'Annotations', '480p',
                                           'training')
+            if self.optical_flow_type is not None:
+                self.optical_flow_path = os.path.join(self.path, 'OF',
+                                                      self.optical_flow_type,
+                                                      '480p', 'training')
         elif 'test' in self.which_set:
             self.image_path = os.path.join(self.path,
                                            'JPEGImages', '480p', 'test')
             self.mask_path = os.path.join(self.path,
                                           'Annotations', '480p', 'test')
+            if self.optical_flow_type is not None:
+                self.optical_flow_path = os.path.join(self.path, 'OF',
+                                                      self.optical_flow_type,
+                                                      '480p', 'test')
             self.split = 1.
         else:
             raise RuntimeError('Unknown set')
@@ -114,10 +129,21 @@ class DavisDataset(ThreadedDataset):
             frame = prefix + '/' + frame_name
 
             img = io.imread(os.path.join(self.image_path, frame + 'jpg'))
-            mask = io.imread(os.path.join(self.mask_path, frame + 'png'))
-
             img = img.astype(floatX) / 255.
+            mask = io.imread(os.path.join(self.mask_path, frame + 'png'))
             mask = (mask / 255).astype('int32')
+            if self.optical_flow_type is not None:
+                if os.path.exists(os.path.join(self.optical_flow_path,
+                                               frame + 'jpg')):
+                    of = io.imread(os.path.join(self.optical_flow_path,
+                                                frame + 'jpg'))
+                else:
+                    last_frame = [el for el in self.filenames
+                                  if prefix in el][-2]
+                    of = io.imread(os.path.join(self.optical_flow_path,
+                                                last_frame + 'jpg'))
+                of = of.astype(floatX) / 255.
+                img = np.concatenate((img, of), -1)
 
             X.append(img)
             Y.append(mask)
@@ -134,13 +160,14 @@ class DavisDataset(ThreadedDataset):
 def test():
     trainiter = DavisDataset(
         which_set='train',
-        batch_size=20,
+        batch_size=1,
         seq_per_subset=0,
-        seq_length=0,
+        seq_length=71,
         overlap=0,
         data_augm_kwargs={
             'crop_size': (224, 224)},
         split=0.75,
+        optical_flow_type='Farn',
         return_one_hot=True,
         return_01c=True,
         use_threads=True,
