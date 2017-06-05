@@ -214,8 +214,8 @@ class ThreadedDataset(object):
         default_data_augm_kwargs = {
             'crop_size': None,
             'crop_mode': 'random',
-            'smart_crop_h_shift_range': 0,
-            'smart_crop_w_shift_range': 0,
+            'smart_crop_random_h_shift_range': 0,
+            'smart_crop_random_v_shift_range': 0,
             'rotation_range': 0,
             'width_shift_range': 0,
             'height_shift_range': 0,
@@ -250,8 +250,7 @@ class ThreadedDataset(object):
             if cs == [0, 0]:
                 cs = None
             self.data_augm_kwargs['crop_size'] = cs
-            accepted_crop_modes = {'random', 'smart'}
-            if self.data_augm_kwargs['crop_mode'] not in accepted_crop_modes:
+            if self.data_augm_kwargs['crop_mode'] not in ['random', 'smart']:
                 raise NotImplementedError('`crop_mode` should be one of '
                                           '{`random`, `smart`}')
 
