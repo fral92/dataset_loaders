@@ -216,6 +216,9 @@ class ThreadedDataset(object):
             'crop_mode': 'random',
             'smart_crop_random_h_shift_range': 0,
             'smart_crop_random_v_shift_range': 0,
+            'return_optical_flow': False,
+            'compute_optical_flow': False,
+            'optical_flow_type': 'Farn',
             'rotation_range': 0,
             'width_shift_range': 0,
             'height_shift_range': 0,
@@ -622,11 +625,14 @@ class ThreadedDataset(object):
                     seq_y = seq_y[np.newaxis, ...]
                 assert seq_y.ndim == 3
 
+            data_path_subdir = self.image_path.split(
+                self.path + '/')[1].split('/', 1)[1]
             # Perform data augmentation, if needed
             seq_x, seq_y = random_transform(
-                seq_x, seq_y,
+                seq_x, seq_y, el, self.path,
                 nclasses=self.nclasses,
                 void_label=self.void_labels,
+                optical_flow_subdir=data_path_subdir,
                 **self.data_augm_kwargs)
 
             if self.set_has_GT and self._void_labels != []:

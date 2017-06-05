@@ -6,7 +6,7 @@ import numpy as np
 import scipy.misc
 import scipy.ndimage as ndi
 from skimage.color import rgb2gray, gray2rgb
-from skimage import img_as_float
+from skimage import img_as_float, io
 
 
 def optical_flow(seq, rows_idx, cols_idx, chan_idx, return_rgb=False):
@@ -329,6 +329,8 @@ def apply_warp(x, warp_field, fill_mode='reflect',
 
 
 def random_transform(x, y=None,
+                     sequence_names=None,
+                     data_path=None,
                      rotation_range=0.,
                      width_shift_range=0.,
                      height_shift_range=0.,
@@ -349,6 +351,9 @@ def random_transform(x, y=None,
                      smart_crop_random_h_shift_range=0,
                      smart_crop_random_v_shift_range=0,
                      return_optical_flow=False,
+                     compute_optical_flow=False,
+                     optical_flow_type='Farn',
+                     optical_flow_subdir=None,
                      nclasses=None,
                      gamma=0.,
                      gain=1.,
@@ -367,6 +372,10 @@ def random_transform(x, y=None,
         An image.
     y: array of int
         An array with labels.
+    sequence_names: list of strings
+        A list of prefix and names for the current sequence
+    data_path: string
+        Current dataset path
     rotation_range: int
         Degrees of rotation (0 to 180).
     width_shift_range: float
@@ -429,6 +438,14 @@ def random_transform(x, y=None,
         end of the channel axis of the image. If True, angle and
         magnitude will be returned, if set to 'rbg' an RGB representation
         will be returned instead. Default: False.
+    compute_optical_flow: bool
+        If not False the optical flow is computed online for each
+        sequence to be loaded. If True the optical flow is loaded from
+        the specific directory (if exists).
+    optical_flow_type: string
+        Indicates the method used to generate the optical flow. The
+        optical flow is loaded from a specific directory based on this
+        type.
     nclasses: int
         The number of classes of the dataset.
     gamma: float
@@ -576,6 +593,31 @@ def random_transform(x, y=None,
                                     fill_mode=fill_mode,
                                     fill_constant=cval_mask,
                                     rows_idx=rows_idx, cols_idx=cols_idx))
+    flow = None
+    if return_optical_flow:
+        flow = []
+        if compute_optical_flow:
+            flow = optical_flow(x, rows_idx, cols_idx, chan_idx,
+                                return_rgb=return_optical_flow == 'rgb')
+        else:
+            if optical_flow_type not in ['Brox', 'Farn', 'LK', 'TVL1']:
+                raise RuntimeError('Unknown optical flow type')
+            optical_flow_path = os.path.join(data_path, 'OF',
+                                             optical_flow_type,
+                                             optical_flow_subdir)
+            if not os.path.exists(optical_flow_path):
+                raise RuntimeError('No optical flow found for this dataset')
+
+            for prefix, frame_names in sequence_names:
+                frame = prefix + '/' + frame_names
+                if os.path.exists(os.path.join(optical_flow_path,
+                                               frame + 'jpg')):
+                    of = io.imread(os.path.join(optical_flow_path,
+                                                frame + 'jpg'))
+                    of = of.astype(x.dtype) / 255.
+                else:
+                    of = np.zeros(x.shape[1:], x.dtype)
+                flow.append(np.array(of))
 
     if crop_mode == 'smart':
         # Compute a (n-1)D fg/bg binary mask (with nD input)
@@ -653,6 +695,9 @@ def random_transform(x, y=None,
         if y is not None and len(y) > 0:
             y = y.transpose(pattern)
             y = y[..., top:top+crop[0], left:left+crop[1]]
+        if flow is not None:
+            flow = flow.transpose(pattern)
+            flow = flow[..., top:top+crop[0], left:left+crop[1]]
         # Padding
         if pad != [0, 0]:
             pad_pattern = ((0, 0),) * (x.ndim - 2) + (
@@ -660,15 +705,16 @@ def random_transform(x, y=None,
                 (pad[1]//2, pad[1] - pad[1]//2))
             x = np.pad(x, pad_pattern, 'constant')
             y = np.pad(y, pad_pattern, 'constant', constant_values=void_label)
+            flow = np.pad(flow, pad_pattern, 'constant')
 
         x = x.transpose(inv_pattern)
         if y is not None and len(y) > 0:
             y = y.transpose(inv_pattern)
+        if flow is not None:
+            flow = flow.transpose(inv_pattern)
 
     if return_optical_flow:
-        flow = optical_flow(x, rows_idx, cols_idx, chan_idx,
-                            return_rgb=return_optical_flow == 'rgb')
-        x = np.concatenate((x, flow), axis=chan_idx)
+        x = np.concatenate((x, np.array(flow)), axis=chan_idx)
 
     # Save augmented images
     if save_to_dir:
