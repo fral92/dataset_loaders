@@ -214,6 +214,7 @@ class ThreadedDataset(object):
         # Set default values for the data augmentation params if not specified
         default_data_augm_kwargs = {
             'crop_size': None,
+            'return_optical_flow': None,
             'rotation_range': 0,
             'width_shift_range': 0,
             'height_shift_range': 0,

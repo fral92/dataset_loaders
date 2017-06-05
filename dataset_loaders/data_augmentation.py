@@ -1,6 +1,8 @@
 # Based on
 # https://github.com/fchollet/keras/blob/master/keras/preprocessing/image.py
 import os
+import shutil
+import warnings
 
 import numpy as np
 import scipy.misc
@@ -9,44 +11,59 @@ from skimage.color import rgb2gray, gray2rgb
 from skimage import img_as_float
 
 
-def optical_flow(seq, rows_idx, cols_idx, chan_idx, return_rgb=False):
-    '''Optical flow
+def farn_optical_flow(dataset):
+    '''Farneback optical flow
 
     Takes a 4D array of sequences and returns a 4D array with
     an RGB optical flow image for each frame in the input'''
     import cv2
-    if seq.ndim != 4:
+    warnings.warn('Farneback optical flow not stored on disk. It will now be '
+                  'computed on the whole dataset and stored on disk.'
+                  'Time to sit back and get a coffee!')
+
+    # Create a copy of the dataset to iterate on
+    dataset = dataset.__class__(batch_size=1,
+                                return_01c=True,
+                                return_0_255=True,
+                                shuffle_at_each_epoch=False,
+                                infinite_iterator=False)
+
+    ret = dataset.next()
+    frame0 = ret['data']
+    prefix0 = ret['subset'][0]
+    if frame0.ndim != 4:
         raise RuntimeError('Optical flow expected 4 dimensions, got %d' %
-                           seq.ndim)
-    seq = seq.copy()
-    seq = (seq * 255).astype('uint8')
-    # Reshape to channel last: (b*seq, 0, 1, ch) if seq
-    pattern = [el for el in range(seq.ndim)
-               if el not in (rows_idx, cols_idx, chan_idx)]
-    pattern += [rows_idx, cols_idx, chan_idx]
-    inv_pattern = [pattern.index(el) for el in range(seq.ndim)]
-    seq = seq.transpose(pattern)
-    if seq.shape[0] == 1:
-        raise RuntimeError('Optical flow needs a sequence longer than 1 '
-                           'to work')
-    seq = seq[..., ::-1]  # Go BGR for OpenCV
-
-    frame1 = seq[0]
-    if return_rgb:
-        flow_seq = np.zeros_like(seq)
-        hsv = np.zeros_like(frame1)
-    else:
-        sh = list(seq.shape)
-        sh[-1] = 2
-        flow_seq = np.zeros(sh)
-
-    frame1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)  # Go to gray
+                           frame0.ndim)
+    frame0 = frame0[0, ..., ::-1]  # go BGR for OpenCV + remove batch dim
+    frame0 = cv2.cvtColor(frame0, cv2.COLOR_BGR2GRAY)  # Go gray
 
     flow = None
-    for i, frame2 in enumerate(seq[1:]):
-        frame2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)  # Go to gray
-        flow = cv2.calcOpticalFlowFarneback(prev=frame1,
-                                            next=frame2,
+    of_path = os.path.join(dataset.path, 'OF', 'Farn')
+    of_shared_path = os.path.join(dataset.shared_path, 'OF', 'Farn')
+
+    for ret in dataset:
+        frame1 = ret['data']
+        filename1 = ret['filenames'][0, 0]
+        # Strip extension, if any
+        filename1 = filename1[:-4] + '.'.join(filename1[-4:].split('.')[:-1])
+        prefix1 = ret['subset'][0]
+
+        if frame1.ndim != 4:
+            raise RuntimeError('Optical flow expected 4 dimensions, got %d' %
+                               frame1.ndim)
+
+        frame1 = frame1[0, ..., ::-1]  # go BGR for OpenCV + remove batch dim
+        frame1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)  # Go gray
+
+        if prefix1 != prefix0:
+            # First frame of a new subset
+            frame0 = frame1
+            prefix0 = prefix1
+            continue
+
+        # Compute displacement
+        flow = cv2.calcOpticalFlowFarneback(prev=frame0,
+                                            next=frame1,
                                             pyr_scale=0.5,
                                             levels=3,
                                             winsize=10,
@@ -55,24 +72,22 @@ def optical_flow(seq, rows_idx, cols_idx, chan_idx, return_rgb=False):
                                             poly_sigma=1.1,
                                             flags=0,
                                             flow=flow)
-        mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1],
-                                   angleInDegrees=True)
-        # normalize between 0 and 255
-        ang = ang / 360 * 255
-        if return_rgb:
-            hsv[..., 0] = ang
-            hsv[..., 1] = 255
-            hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
-            rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
-            flow_seq[i+1] = rgb
-            # Image.fromarray(rgb).show()
-            # cv2.imwrite('opticalfb.png', frame2)
-            # cv2.imwrite('opticalhsv.png', bgr)
-        else:
-            flow_seq[i+1] = np.stack((ang, mag), 2)
-        frame1 = frame2
-    flow_seq = flow_seq.transpose(inv_pattern)
-    return flow_seq / 255.  # return in [0, 1]
+
+        # Save in the local path
+        if not os.path.exists(os.path.join(of_path, prefix1)):
+            os.makedirs(os.path.join(of_path, prefix1))
+        # Save the flow as dy, dx
+        np.save(os.path.join(of_path, prefix1, filename1), flow[..., ::-1])
+        # cv2.imwrite(os.path.join(of_path, prefix1, filename1 + '.png'), flow)
+        frame0 = frame1
+        prefix0 = prefix1
+
+    # Store a copy in shared_path
+    # TODO there might be a race condition when multiple experiments are
+    # run and one checks for the existence of the shared path OF dir
+    # while this copy is happening.
+    if of_path != of_shared_path:
+        shutil.copytree(of_path, of_shared_path)
 
 
 def my_label2rgb(labels, cmap, bglabel=None, bg_color=(0., 0., 0.)):
@@ -347,10 +362,11 @@ def random_transform(dataset,
                      warp_sigma=0.1,
                      warp_grid_size=3,
                      crop_size=None,
-                     return_optical_flow=False,
                      nclasses=None,
                      gamma=0.,
                      gain=1.,
+                     return_optical_flow=None,
+                     optical_flow_type='Farn',
                      chan_idx=3,  # No batch yet: (s, 0, 1, c)
                      rows_idx=1,  # No batch yet: (s, 0, 1, c)
                      cols_idx=2,  # No batch yet: (s, 0, 1, c)
@@ -415,17 +431,24 @@ def random_transform(dataset,
     crop_size: tuple
         The size of crop to be applied to images and masks (after any
         other transformation).
-    return_optical_flow: bool
-        If not False a dense optical flow will be concatenated to the
-        end of the channel axis of the image. If True, angle and
-        magnitude will be returned, if set to 'rbg' an RGB representation
-        will be returned instead. Default: False.
     nclasses: int
         The number of classes of the dataset.
     gamma: float
         Controls gamma in Gamma correction.
     gain: float
         Controls gain in Gamma correction.
+    return_optical_flow: string
+        Either 'displacement' or 'rbg'.
+        If set, a dense optical flow will be retrieved from disk (or
+        computed when missing) and returned as a 'flow' key.
+        If 'displacement', the optical flow will be returned as a
+        two-dimensional array of (dx, dy) displacement. If 'rgb', a
+        three dimensional RGB array with values in [0, 255] will be
+        returned. Default: None.
+    optical_flow_type: string
+        Indicates the method used to generate the optical flow. The
+        optical flow is loaded from a specific directory based on this
+        type.
     chan_idx: int
         The index of the channel axis.
     rows_idx: int
@@ -577,6 +600,78 @@ def random_transform(dataset,
                            fill_mode=fill_mode, fill_constant=cval_mask,
                            rows_idx=rows_idx, cols_idx=cols_idx))
 
+    # Optical flow
+    if return_optical_flow:
+        return_optical_flow = return_optical_flow.lower()
+        if return_optical_flow not in ['rgb', 'displacement']:
+            raise RuntimeError('Unknown return_optical_flow value: %s' %
+                               return_optical_flow)
+        if prefix_and_fnames is None:
+            raise RuntimeError('You should specify a list of prefixes '
+                               'and filenames')
+        # Find the filename of the first frame of this prefix
+        first_frame_of_prefix = sorted(dataset.get_names()[seq['subset']])[0]
+
+        of_base_path = os.path.join(dataset.path, 'OF', optical_flow_type)
+        if not os.path.isdir(of_base_path):
+            # The OF is not on disk: compute it and store it
+            if optical_flow_type != 'Farn':
+                raise RuntimeError('Unknown optical flow type: %s. For '
+                                   'optical_flow_type other than Farn '
+                                   'please run your own implementation '
+                                   'manually and save it in %s' %
+                                   optical_flow_type, of_base_path)
+            farn_optical_flow(dataset)  # Compute and store on disk
+
+        # Load the OF from disk
+        import skimage
+        flow = []
+        for frame in prefix_and_fnames:
+            if frame[1] == first_frame_of_prefix:
+                # It's the first frame of the prefix, there is no
+                # previous frame to compute the OF with, return a blank one
+                of = np.zeros(sh[1:], seq['data'].dtype)
+                flow.append(of)
+                continue
+
+            # Read from disk
+            of_path = os.path.join(of_base_path, frame[0],
+                                   frame[1].rstrip('.') + '.npy')
+            if os.path.exists(of_path):
+                of = np.load(of_path)
+            else:
+                raise RuntimeError('Optical flow not found for this '
+                                   'file: %s' % of_path)
+
+            if return_optical_flow == 'rgb':
+                # of = of[..., ::-1]
+
+                def cart2pol(x, y):
+                    mag = np.sqrt(x**2 + y**2)
+                    ang = np.arctan2(y, x)  # note, in [-pi, pi]
+                    return mag, ang
+                mag, ang = cart2pol(of[..., 0], of[..., 1])
+
+                # Normalize to [0, 1]
+                sh = of.shape[:2]
+                two_pi = 2 * np.pi
+                ang = (ang + two_pi) % two_pi / two_pi
+                mag = mag - mag.min()
+                mag /= np.float(mag.max())
+
+                # Convert to RGB [0, 1]
+                hsv = np.ones((sh[0], sh[1], 3))
+                hsv[..., 0] = ang
+                hsv[..., 2] = mag
+                of = skimage.color.hsv2rgb(hsv)  # HSV --> RGB [0, 1]
+                of = (of * 255).astype('uint8')
+                from PIL import Image
+                import ipdb; ipdb.set_trace()
+                Image.fromarray(of).show()
+
+            flow.append(np.array(of))
+        flow = np.array(flow)
+
     # Crop
     # Expects axes with shape (..., 0, 1)
     # TODO: Add center crop
@@ -613,6 +708,9 @@ def random_transform(dataset,
             seq['labels'] = seq['labels'].transpose(pattern)
             seq['labels'] = seq['labels'][..., top:top+crop[0],
                                           left:left+crop[1]]
+        if return_optical_flow:
+            flow = flow.transpose(pattern)
+            flow = flow[..., top:top+crop[0], left:left+crop[1]]
         # Padding
         if pad != [0, 0]:
             pad_pattern = ((0, 0),) * (seq['data'].ndim - 2) + (
@@ -621,16 +719,15 @@ def random_transform(dataset,
             seq['data'] = np.pad(seq['data'], pad_pattern, 'constant')
             seq['labels'] = np.pad(seq['labels'], pad_pattern, 'constant',
                                    constant_values=void_label)
+            if return_optical_flow:
+                flow = np.pad(flow, pad_pattern, 'constant')  # pad with zeros
 
         # Reshape to original shape
         seq['data'] = seq['data'].transpose(inv_pattern)
         if seq['labels'] is not None and len(seq['labels']) > 0:
             seq['labels'] = seq['labels'].transpose(inv_pattern)
-
-    if return_optical_flow:
-        flow = optical_flow(seq['data'], rows_idx, cols_idx, chan_idx,
-                            return_rgb=return_optical_flow == 'rgb')
-        seq['data'] = np.concatenate((seq['data'], flow), axis=chan_idx)
+        if return_optical_flow:
+            flow = flow.transpose(inv_pattern)
 
     # Save augmented images
     if save_to_dir:
@@ -644,3 +741,6 @@ def random_transform(dataset,
     # Undo extra dim
     if seq['labels'] is not None and len(seq['labels']) > 0:
         seq['labels'] = seq['labels'][..., 0]
+
+    if return_optical_flow:
+        seq['flow'] = np.array(flow)
