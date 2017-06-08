@@ -330,6 +330,7 @@ def apply_warp(x, warp_field, fill_mode='reflect',
 
 def random_transform(x, y=None,
                      sequence_names=None,
+                     filenames=None,
                      data_path=None,
                      rotation_range=0.,
                      width_shift_range=0.,
@@ -351,6 +352,7 @@ def random_transform(x, y=None,
                      smart_crop_random_h_shift_range=0,
                      smart_crop_random_v_shift_range=0,
                      return_optical_flow=False,
+                     repeat_first_optical_flow=False,
                      compute_optical_flow=False,
                      optical_flow_type='Farn',
                      optical_flow_subdir=None,
@@ -438,6 +440,10 @@ def random_transform(x, y=None,
         end of the channel axis of the image. If True, angle and
         magnitude will be returned, if set to 'rbg' an RGB representation
         will be returned instead. Default: False.
+    repeat_first_optical_flow: bool
+        If True the optical flow for the first frame of the whole video
+        sequence will be duplicated, otherwise it will be an array of zeros
+        with the same shape of the first frame.
     compute_optical_flow: bool
         If not False the optical flow is computed online for each
         sequence to be loaded. If True the optical flow is loaded from
@@ -610,13 +616,23 @@ def random_transform(x, y=None,
 
             for prefix, frame_names in sequence_names:
                 frame = prefix + '/' + frame_names
-                if os.path.exists(os.path.join(optical_flow_path,
-                                               frame + 'jpg')):
-                    of = io.imread(os.path.join(optical_flow_path,
-                                                frame + 'jpg'))
-                    of = of.astype(x.dtype) / 255.
+                file_index = filenames.index(frame)
+                if file_index != 0:
+                    file_index -= 1
+                elif repeat_first_optical_flow:
+                    file_index = 0
                 else:
                     of = np.zeros(x.shape[1:], x.dtype)
+                    flow.append(of)
+                    continue
+                frame = filenames[file_index]
+                of_path = os.path.join(optical_flow_path, frame + 'jpg')
+                if os.path.exists(of_path):
+                    of = io.imread(of_path)
+                    of = of.astype(x.dtype) / 255.
+                else:
+                    raise RuntimeError('Optical flow not found for this '
+                                       'file: %s' % of_path)
                 flow.append(np.array(of))
             flow = np.array(flow)
 

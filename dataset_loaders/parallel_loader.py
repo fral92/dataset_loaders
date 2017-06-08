@@ -217,6 +217,7 @@ class ThreadedDataset(object):
             'smart_crop_random_h_shift_range': 0,
             'smart_crop_random_v_shift_range': 0,
             'return_optical_flow': False,
+            'repeat_first_optical_flow': True,
             'compute_optical_flow': False,
             'optical_flow_type': 'Farn',
             'rotation_range': 0,
@@ -627,10 +628,13 @@ class ThreadedDataset(object):
 
             data_path_subdir = self.image_path.split(
                 self.path + '/')[1].split('/', 1)[1]
+            # Get all the filenames for the current batch to load
+            current_filenames = [fname for fname in self.filenames if
+                                 el[0][0] in fname]
             # Perform data augmentation, if needed
             seq_x, seq_y = random_transform(
-                seq_x, seq_y, el, self.path,
-                nclasses=self.nclasses,
+                seq_x, seq_y, el, current_filenames,
+                self.path, nclasses=self.nclasses,
                 void_label=self.void_labels,
                 optical_flow_subdir=data_path_subdir,
                 **self.data_augm_kwargs)
