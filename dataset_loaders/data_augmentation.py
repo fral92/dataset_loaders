@@ -634,8 +634,11 @@ def random_transform(x, y=None,
             elif crop_mode == 'smart':
                 crop_center_row = np.random.choice(max_rows)
                 # Random vertical shift
-                v_shift = np.random.randint(-smart_crop_random_v_shift_range,
-                                            smart_crop_random_v_shift_range)
+                v_shift = 0
+                if smart_crop_random_v_shift_range > 0:
+                    v_shift = np.random.randint(
+                        -smart_crop_random_v_shift_range,
+                        smart_crop_random_v_shift_range)
                 crop_center_row += v_shift
                 top = max(0, crop_center_row - crop_size[0] // 2)
                 top = min(top, h - crop[0])
@@ -650,8 +653,11 @@ def random_transform(x, y=None,
             elif crop_mode == 'smart':
                 crop_center_col = np.random.choice(max_cols)
                 # Random horizontal shift
-                h_shift = np.random.randint(-smart_crop_random_h_shift_range,
-                                            smart_crop_random_h_shift_range)
+                h_shift = 0
+                if smart_crop_random_h_shift_range:
+                    h_shift = np.random.randint(
+                        -smart_crop_random_h_shift_range,
+                        smart_crop_random_h_shift_range)
                 crop_center_col += h_shift
                 left = max(0, crop_center_col - crop_size[1] // 2)
                 left = min(left, w - crop[1])
