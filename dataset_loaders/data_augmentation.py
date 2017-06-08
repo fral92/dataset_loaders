@@ -618,6 +618,7 @@ def random_transform(x, y=None,
                 else:
                     of = np.zeros(x.shape[1:], x.dtype)
                 flow.append(np.array(of))
+            flow = np.array(flow)
 
     if crop_mode == 'smart':
         # Compute a (n-1)D fg/bg binary mask (with nD input)
