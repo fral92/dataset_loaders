@@ -260,7 +260,6 @@ class ThreadedDataset(object):
             if self.data_augm_kwargs['crop_mode'] not in ['random', 'smart']:
                 raise NotImplementedError('`crop_mode` should be one of '
                                           '{`random`, `smart`}')
-                                          '{`random`, `smart`}')
 
         # Do not support multithread without shuffling
         if use_threads and nthreads > 1 and not shuffle_at_each_epoch:
