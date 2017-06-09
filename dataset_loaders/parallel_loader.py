@@ -215,6 +215,8 @@ class ThreadedDataset(object):
         default_data_augm_kwargs = {
             'crop_size': None,
             'crop_mode': 'random',
+            'smart_crop_threshold': 0.5,
+            'smart_crop_search_step': 10,
             'smart_crop_random_h_shift_range': 0,
             'smart_crop_random_v_shift_range': 0,
             'rotation_range': 0,

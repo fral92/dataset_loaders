@@ -348,6 +348,8 @@ def random_transform(x, y=None,
                      warp_grid_size=3,
                      crop_size=None,
                      crop_mode='random',
+                     smart_crop_threshold=0.5,
+                     smart_crop_search_step=10,
                      smart_crop_random_h_shift_range=0,
                      smart_crop_random_v_shift_range=0,
                      return_optical_flow=False,
@@ -609,6 +611,48 @@ def random_transform(x, y=None,
             cumulative_mask = foreground_mask
         else:
             cumulative_mask = np.sum(foreground_mask, axis=0)
+        # Get background concentration in the four quadrants of the mask
+        quadrants = []
+        first_half_v = cumulative_mask.shape[0] // 2
+        first_half_h = cumulative_mask.shape[1] // 2
+        cumulative_mask_h = cumulative_mask.shape[0]
+        cumulative_mask_w = cumulative_mask.shape[1]
+        # Select the four quadrants of mask
+        quadrants.append(cumulative_mask[0:first_half_v,
+                                         0:first_half_h])
+
+        quadrants.append(cumulative_mask[0:first_half_v,
+                                         first_half_h:cumulative_mask_w])
+        quadrants.append(cumulative_mask[first_half_v:cumulative_mask_h,
+                                         first_half_h:cumulative_mask_w])
+        quadrants.append(cumulative_mask[first_half_v:cumulative_mask_h,
+                                         0:first_half_h])
+        # Compute the max num of background for each quadrant
+        background_concentrations = []
+        for quadrant in quadrants:
+            rows, cols = np.where(quadrant == 0)
+            background_concentrations.append(len(zip(rows, cols)))
+        max_background_quadrant = background_concentrations.index(
+            np.max(background_concentrations))
+        quadrant_mask = np.zeros(cumulative_mask.shape, cumulative_mask.dtype)
+        if max_background_quadrant == 0:
+            b_rows, b_cols = np.where(
+                cumulative_mask[0:first_half_v, 0:first_half_h] == 0)
+            quadrant_mask[(b_rows, b_cols)] = 1
+        elif max_background_quadrant == 1:
+            b_rows, b_cols = np.where(cumulative_mask[0:first_half_v,
+                                      first_half_h:cumulative_mask_w] == 0)
+            quadrant_mask[(b_rows, b_cols + first_half_h)] = 1
+        elif max_background_quadrant == 2:
+            b_rows, b_cols = np.where(
+                cumulative_mask[first_half_v:cumulative_mask_h,
+                                first_half_h:cumulative_mask_w] == 0)
+            quadrant_mask[(b_rows + first_half_v, b_cols + first_half_h)] = 1
+        else:
+            b_rows, b_cols = np.where(
+                cumulative_mask[first_half_v:cumulative_mask_h,
+                                0:first_half_h] == 0)
+            quadrant_mask[(b_rows + first_half_v, b_cols)] = 1
         max_mask_value = np.max(cumulative_mask)
         max_rows, max_cols = np.where(cumulative_mask == max_mask_value)
 
@@ -665,6 +709,63 @@ def random_transform(x, y=None,
             # Set pad and reset crop
             pad[1] = crop[1] - w
             left, crop[1] = 0, w
+
+        if crop_mode == 'smart':
+            # Search for requested f/b threshold
+            background_portion = np.sum(
+                cumulative_mask[top:top+crop[0], left:left+crop[1]] == 0)
+            current_threshold = background_portion / np.float(crop[0] *
+                                                              crop[1])
+            best_top = top
+            best_left = left
+            if current_threshold < smart_crop_threshold:
+                best_threshold_found = False
+                # Select randomly one of the background pixels of the
+                # selected quadrant mask
+                b_rows, b_cols = np.where(quadrant_mask == 1)
+                random_b_x = np.random.choice(b_cols)
+                random_b_y = np.random.choice(b_rows)
+                if crop_center_col - random_b_x > 0:
+                    max_left = 0
+                    search_direction_x = -1
+                else:
+                    max_left = w - crop[1]
+                    search_direction_x = 1
+                if crop_center_row - random_b_y > 0:
+                    max_top = 0
+                    search_direction_y = -1
+                else:
+                    max_top = h - crop[0]
+                    search_direction_y = 1
+                i = 0
+                while not best_threshold_found:
+                    i += 1
+                    print('iteration %d' % i)
+                    top += search_direction_y * smart_crop_search_step
+                    top = max(0, top)
+                    top = min(top, h - crop[0])
+                    left += search_direction_x * smart_crop_search_step
+                    left = max(0, left)
+                    left = min(left, w - crop[1])
+                    # Search for requested f/b threshold
+                    background_portion = np.sum(
+                        cumulative_mask[top:top+crop[0],
+                                        left:left+crop[1]] == 0)
+                    old_threshold = current_threshold
+                    current_threshold = background_portion / np.float(crop[0] *
+                                                                      crop[1])
+                    if current_threshold > old_threshold:
+                        best_top = top
+                        best_left = left
+                    if current_threshold >= smart_crop_threshold:
+                        best_threshold_found = True
+                    elif top == max_top and left == max_left:
+                        best_threshold_found = True
+                        top = best_top
+                        left = best_left
+                print('best threshold: %f' % current_threshold)
+            else:
+                print('best theshold: %f' % current_threshold)
 
         # Cropping
         x = x[..., top:top+crop[0], left:left+crop[1]]
