@@ -6,7 +6,7 @@ import numpy as np
 import scipy.misc
 import scipy.ndimage as ndi
 from skimage.color import rgb2gray, gray2rgb
-from skimage import img_as_float, io
+from skimage import img_as_float
 
 
 def optical_flow(seq, rows_idx, cols_idx, chan_idx, return_rgb=False):
@@ -601,6 +601,7 @@ def random_transform(x, y=None,
                                     rows_idx=rows_idx, cols_idx=cols_idx))
     flow = None
     if return_optical_flow:
+        from skimage import io
         flow = []
         if compute_optical_flow:
             flow = optical_flow(x, rows_idx, cols_idx, chan_idx,
@@ -652,7 +653,6 @@ def random_transform(x, y=None,
             cumulative_mask = np.sum(foreground_mask, axis=0)
         max_mask_value = np.max(cumulative_mask)
         max_rows, max_cols = np.where(cumulative_mask == max_mask_value)
-
 
     # Crop
     # Expects axes with shape (..., 0, 1)
