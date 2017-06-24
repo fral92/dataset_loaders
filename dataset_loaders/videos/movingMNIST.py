@@ -45,15 +45,18 @@ class MovingMNISTDataset(ThreadedDataset):
 
     data_shape = (64, 64, 1)
 
-    def __init__(self, which_set='train', nvids=1000, image_size=64,
-                 num_digits=1, digits_sizes=[28, 28], background='zeros',
-                 digits_speed=0.3, change_dir_prob=[0., 0.], rng=None,
-                 seed=1, *args, **kwargs):
+    def __init__(self, which_set='train', nvids=1000, output_frame='last',
+                 image_size=64, num_digits=1, digits_sizes=[28, 28],
+                 background='zeros', digits_speed=0.3, binarize=True,
+                 change_dir_prob=[0., 0.], rng=None, seed=1, *args, **kwargs):
 
         self.data_shape = (image_size, image_size, 1)
 
         self.which_set = 'validation' if which_set == 'valid' else which_set
         self.nvids = nvids
+        if output_frame not in ['middle', 'last', 'all']:
+            raise NotImplementedError()
+        self.output_frame = output_frame
         self.frame_size = image_size
         self.curr_data_idx = 0
         self.num_digits = num_digits
@@ -64,6 +67,7 @@ class MovingMNISTDataset(ThreadedDataset):
         self.digits_speed = digits_speed
         self.change_dir_prob = change_dir_prob
         self.vids_indices = range(nvids)
+        self.binarize = binarize
         self._rng = rng if rng else np.random.RandomState(seed)
         # self.path = self.shared_path
         import h5py
@@ -81,7 +85,7 @@ class MovingMNISTDataset(ThreadedDataset):
     def get_names(self):
         """Return a dict of names, per prefix/subset.
            Note: The names will be ignored in load_sequence."""
-        return {'default': [None for _ in range(self.nvids * self.seq_length)]}
+        return {'default': [None for _ in range(self.nvids)]}
 
     def _get_random_trajectory(self):
         # Here add one since the frame after the sequence will be used
@@ -220,13 +224,23 @@ class MovingMNISTDataset(ThreadedDataset):
         """
         sequence = self._get_sequence()
         X = sequence[:self.seq_length]
-        # Return last frame as target
-        Y = sequence[self.seq_length]
+        if self.output_frame == 'middle':
+            Y = sequence[(self.seq_length // 2) + 1]
+        elif self.output_frame == 'last':
+            Y = sequence[self.seq_length]
+        elif self.output_frame == 'all':
+            Y = sequence[1:self.seq_length+1]
         F = self.vids_indices
+
+        if self.binarize:
+            X[X < 0.8] = 0
+            Y[Y < 0.8] = 0
+            X[X >= 0.8] = 1
+            Y[Y >= 0.8] = 1
 
         ret = {}
         ret['data'] = X
-        ret['labels'] = np.asarray(Y[np.newaxis, ...])
+        ret['labels'] = Y[np.newaxis, ...]
         ret['subset'] = []
         ret['filenames'] = np.array(F)
         return ret
