@@ -226,8 +226,10 @@ class MovingMNISTDataset(ThreadedDataset):
         X = sequence[:self.seq_length]
         if self.output_frame == 'middle':
             Y = sequence[(self.seq_length // 2) + 1]
+            Y = Y[np.newaxis, ...]
         elif self.output_frame == 'last':
             Y = sequence[self.seq_length]
+            Y = Y[np.newaxis, ...]
         elif self.output_frame == 'all':
             Y = sequence[1:self.seq_length+1]
         F = self.vids_indices
@@ -240,7 +242,7 @@ class MovingMNISTDataset(ThreadedDataset):
 
         ret = {}
         ret['data'] = X
-        ret['labels'] = Y[np.newaxis, ...]
+        ret['labels'] = Y
         ret['subset'] = []
         ret['filenames'] = np.array(F)
         return ret
