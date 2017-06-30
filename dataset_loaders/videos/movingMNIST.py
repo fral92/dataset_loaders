@@ -58,7 +58,6 @@ class MovingMNISTDataset(ThreadedDataset):
             raise NotImplementedError()
         self.output_frame = output_frame
         self.frame_size = image_size
-        self.curr_data_idx = 0
         self.num_digits = num_digits
         self.digits_sizes = digits_sizes
         self.background = background
@@ -171,11 +170,13 @@ class MovingMNISTDataset(ThreadedDataset):
         for digit_id in range(self.num_digits):
 
             # get random digit from dataset
-            ind = self.vids_indices[self.curr_data_idx]
-            self.curr_data_idx += 1
-            if self.curr_data_idx == self._MNIST_data.shape[0]:
-                self._rng.shuffle(self.vids_indices)
-                self.curr_data_idx = 0
+            curr_data_idx = self._rng.randint(
+                0, self._MNIST_data.shape[0]-1)
+            ind = self.vids_indices[curr_data_idx]
+            # self.curr_data_idx += 1
+            # if self.curr_data_idx == self._MNIST_data.shape[0]:
+            #     self._rng.shuffle(self.vids_indices)
+            #     self.curr_data_idx = 0
             digit_image = self._MNIST_data[ind]
             zoom_factor = 1
             if self.digits_sizes != 28:
@@ -205,7 +206,6 @@ class MovingMNISTDataset(ThreadedDataset):
         """
         if self.which_set != 'train':
             self._rng = np.random.RandomState(self.seed)
-            self.curr_data_idx = 0
             self.vids_indices = range(self.nvids)
 
     def _fill_names_batches(self, *args, **kwargs):
