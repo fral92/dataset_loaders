@@ -52,7 +52,7 @@ class MovingMNISTDataset(ThreadedDataset):
 
         self.data_shape = (image_size, image_size, 1)
 
-        self.which_set = 'validation' if which_set == 'valid' else which_set
+        self.which_set = 'validation' if 'valid' in which_set else which_set
         self.nvids = nvids
         if output_frame not in ['middle', 'last', 'all']:
             raise NotImplementedError()
@@ -243,6 +243,6 @@ class MovingMNISTDataset(ThreadedDataset):
         ret = {}
         ret['data'] = X
         ret['labels'] = Y
-        ret['subset'] = []
+        ret['subset'] = 'default'
         ret['filenames'] = np.array(F)
         return ret
