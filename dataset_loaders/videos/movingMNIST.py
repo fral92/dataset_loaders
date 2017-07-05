@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import copy
 from scipy.ndimage.interpolation import zoom
 
 from dataset_loaders.parallel_loader import ThreadedDataset
@@ -19,22 +20,35 @@ class MovingMNISTDataset(ThreadedDataset):
         to be returned.
     nvids: int
         The number of video sequences to be generated for this set
-    frame_size: int
+    frame_size: list of int
         The size of the frames
     num_digits: int
         The number of moving digits in the video sequence
     digits_sizes: list of int
-        A list of sizes for each digit
-    background: string
-        If is 'zeros' the background will have zero values, otherwhise
+        The size (h, w) of the digits
+    random_background: bool
+        If False the background will have zero values, otherwhise
         it is initialized randomly
-    digits_speed: float, string or list of float
-        The digits speed. If it is a float instance then the same speed
-        is applied to each digit. If it is 'random' then a random speed
-        is generated for each digit
-    change_dir_prob: list of float
-        The probability for each digit to change direction between two
-        consecutive frames
+    binarize: bool
+        If True the frames in the sequence will be returned as binary
+        images {0, 1}, otherwise the images will be in the range [0, 1]
+    init_speed_range: list of floats or list of lists of float
+        The range of the initial linear speed of each digit. A digit
+        speed in that range will be randomly sampled for each digit. If
+        a single list is provided all the digits will have an initial
+        speed sampled in the same range (although with different
+        samples). Otherwise a list specifying the range of initial speed
+        for each digit is expected.
+    stearning_prob_range: list of floats or list of lists of float
+        The range in which the delta speed is sampled in each frame.
+        It represents the probability for each digit to change the
+        direction between two consecutive frames. High values will
+        result in an high probability to divert from the current
+        trajectory. So the more the value is high the more the sequence
+        trajectory will be 'complex'. Putting this values to zero the
+        direction of the digits will not change.
+    rng:
+        If None the default random number generator is used (seed = 1).
     """
     name = 'movingMNIST'
     # The number of *non void* classes
@@ -45,29 +59,40 @@ class MovingMNISTDataset(ThreadedDataset):
 
     data_shape = (64, 64, 1)
 
-    def __init__(self, which_set='train', nvids=1000, output_frame='last',
-                 image_size=64, num_digits=1, digits_sizes=[28, 28],
-                 background='zeros', digits_speed=0.3, binarize=True,
-                 change_dir_prob=[0., 0.], rng=None, seed=1, *args, **kwargs):
+    def __init__(self, which_set='train', num_vids=1000, frame_size=[64, 64],
+                 num_digits=1, digits_sizes=[28, 28], random_background=False,
+                 init_speed_range=[-0.3, 0.3], steering_prob_range=[-0.1, 0.1],
+                 binarize=True, rng=None, *args, **kwargs):
 
-        self.data_shape = (image_size, image_size, 1)
+        self.data_shape = frame_size + [1]
 
         self.which_set = 'validation' if 'valid' in which_set else which_set
-        self.nvids = nvids
-        if output_frame not in ['middle', 'last', 'all']:
-            raise NotImplementedError()
-        self.output_frame = output_frame
-        self.frame_size = image_size
+        self.num_vids = num_vids
+        self.frame_size = frame_size
         self.num_digits = num_digits
         self.digits_sizes = digits_sizes
-        self.background = background
+        self.random_background = random_background
         self.set_has_GT = False
-        self.seed = seed
-        self.digits_speed = digits_speed
-        self.change_dir_prob = change_dir_prob
-        self.vids_indices = range(nvids)
+        if isinstance(init_speed_range[0], list):
+            assert len(init_speed_range) == self.num_digits, (
+                'The lenght of digits_speed list must be equal '
+                'to the number of digits')
+            self.init_speed_range = init_speed_range
+        else:
+            self.init_speed_range = [init_speed_range for _ in
+                                     range(self.num_digits)]
+        if isinstance(steering_prob_range[0], list):
+            assert len(steering_prob_range) == self.num_digits, (
+                'The lenght of steering_prob_range list must be equal '
+                'to the number of digits')
+            self.steering_prob_range = steering_prob_range
+        else:
+            self.steering_prob_range = [steering_prob_range for _ in
+                                        range(self.num_digits)]
         self.binarize = binarize
+        seed = 1
         self._rng = rng if rng else np.random.RandomState(seed)
+        self._origin_rng = copy.deepcopy(self._rng)
         # self.path = self.shared_path
         import h5py
         try:
@@ -76,7 +101,8 @@ class MovingMNISTDataset(ThreadedDataset):
             raise RuntimeError('Failed to load dataset file from: %s' %
                                os.path.join(self.path, 'mnist.h5'))
 
-        self._MNIST_data = f[self.which_set].value[:nvids].reshape(-1, 28, 28)
+        self._MNIST_data = f[self.which_set].value[:num_vids].reshape(-1,
+                                                                      28, 28)
         f.close()
 
         super(MovingMNISTDataset, self).__init__(*args, **kwargs)
@@ -84,116 +110,102 @@ class MovingMNISTDataset(ThreadedDataset):
     def get_names(self):
         """Return a dict of names, per prefix/subset.
            Note: The names will be ignored in load_sequence."""
-        return {'default': [None for _ in range(self.nvids)]}
+        return {'default': [None for _ in range(self.num_vids)]}
 
     def _get_random_trajectory(self):
-        # Here add one since the frame after the sequence will be used
-        # as target
+        # Increase the sequence by one, to account for the extra frame
+        # that will be used as a target
         ext_seq_length = self.seq_length + 1
         canvas_size = self.frame_size - np.max(self.digits_sizes)
 
         # Initial position uniform random inside the box.
         y = self._rng.rand(self.num_digits)
         x = self._rng.rand(self.num_digits)
-        # Choose speed.
-        speed = self.digits_speed
-        if isinstance(self.digits_speed, float):
-            speed = [self.digits_speed for el in range(self.num_digits)]
-        elif self.digits_speed == 'random':
-            speed = self._rng.rand(self.num_digits)
-        v_y = np.asarray(speed)  # np.sin(theta)
-        v_x = np.asarray(speed)  # np.cos(theta)
+        # Initial speed module and angle
+        speed_module = [self._rng.uniform(low=init_range[0],
+                                          high=init_range[1])
+                        for init_range in self.init_speed_range]
+        theta = [self._rng.uniform(high=2*np.pi)
+                 for _ in range(self.num_digits)]
+        # Compute the speed components along the (x, y) axis
+        speed_x = np.cos(theta) * speed_module
+        speed_y = np.sin(theta) * speed_module
 
-        start_y = np.zeros((ext_seq_length, self.num_digits))
-        start_x = np.zeros((ext_seq_length, self.num_digits))
-        # Random directions
-        y_rand = np.asarray([self._rng.uniform(-1, 1) for _ in
-                             range(self.num_digits)])
-        x_rand = np.asarray([self._rng.uniform(-1, 1) for _ in
-                             range(self.num_digits)])
-
-        # For each digit for each frame compute the decision to change
-        # direction following a binomial distribution
-        change_dir = []
-        for i in range(self.num_digits):
-            sampling = [self._rng.binomial(1, self.change_dir_prob[i])
-                        for _ in range(ext_seq_length)]
-            change_dir.append(sampling)
-        change_dir = zip(*change_dir)
+        # This will contain the trajectory along the (x, y) axis
+        trajectory_x = np.zeros((ext_seq_length, self.num_digits))
+        trajectory_y = np.zeros((ext_seq_length, self.num_digits))
 
         for frame_id in range(ext_seq_length):
 
-            # Which digits change the direction in this frame
-            c_digits = np.where(change_dir[frame_id])
-            # Number of digits changing direction in this frame
-            n_c_digits = len(c_digits)
-            np.put(y_rand, c_digits,
-                   [self._rng.uniform(-1, 1) for _ in range(n_c_digits)])
-            np.put(x_rand, c_digits,
-                   [self._rng.uniform(-1, 1) for _ in range(n_c_digits)])
+            delta_x = [self._rng.uniform(low=st_prob_range[0],
+                                         high=st_prob_range[1])
+                       for st_prob_range in self.steering_prob_range]
+            delta_y = [self._rng.uniform(low=st_prob_range[0],
+                                         high=st_prob_range[1])
+                       for st_prob_range in self.steering_prob_range]
+
+            # Compute the delta speed components along the (x, y) axis
+            speed_x += delta_x
+            speed_y += delta_y
+
             # Take a step along velocity.
-            y += v_y * y_rand  # + self.step_length_
-            x += v_x * x_rand  # + self.step_length_
+            x += speed_x
+            y += speed_y
             # Bounce off edges.
             for j in range(self.num_digits):
                 if x[j] <= 0:
                     x[j] = 0
-                    v_x[j] = -v_x[j]
+                    speed_x[j] = -speed_x[j]
                 elif x[j] >= 1.0:
                     x[j] = 1.0
-                    v_x[j] = -v_x[j]
+                    speed_x[j] = -speed_x[j]
                 if y[j] <= 0:
                     y[j] = 0
-                    v_y[j] = -v_y[j]
+                    speed_y[j] = -speed_y[j]
                 elif y[j] >= 1.0:
                     y[j] = 1.0
-                    v_y[j] = -v_y[j]
-            start_y[frame_id] = y
-            start_x[frame_id] = x
+                    speed_y[j] = -speed_y[j]
+            trajectory_x[frame_id] = x
+            trajectory_y[frame_id] = y
 
         # Scale to the size of the canvas.
-        start_y = (canvas_size * start_y).astype(np.int32)
-        start_x = (canvas_size * start_x).astype(np.int32)
-        return start_y, start_x
+        trajectory_x = (canvas_size[1] * trajectory_x).astype(np.int32)
+        trajectory_y = (canvas_size[0] * trajectory_y).astype(np.int32)
+        return trajectory_x, trajectory_y
 
     def _get_sequence(self, verbose=False):
-        start_y, start_x = self._get_random_trajectory()
+        trajectory_x, trajectory_y = self._get_random_trajectory()
 
         # minibatch data
-        if self.background == 'zeros':
-            out_sequence = np.zeros((self.seq_length+1, self.frame_size,
-                                     self.frame_size, 1), dtype=np.float32)
-        elif self.background == 'rand':
-            out_sequence = self._rng.rand(self.seq_length+1, self.frame_size,
-                                          self.frame_size, 1)
+        if self.random_background:
+            out_sequence = self._rng.rand(self.seq_length+1,
+                                          self.frame_size[0],
+                                          self.frame_size[1], 1)
+        else:
+            out_sequence = np.zeros((self.seq_length+1,
+                                     self.frame_size[0],
+                                     self.frame_size[1], 1),
+                                    dtype=np.float32)
 
         for digit_id in range(self.num_digits):
 
             # get random digit from dataset
             curr_data_idx = self._rng.randint(
                 0, self._MNIST_data.shape[0]-1)
-            ind = self.vids_indices[curr_data_idx]
-            # self.curr_data_idx += 1
-            # if self.curr_data_idx == self._MNIST_data.shape[0]:
-            #     self._rng.shuffle(self.vids_indices)
-            #     self.curr_data_idx = 0
-            digit_image = self._MNIST_data[ind]
+            digit_image = self._MNIST_data[curr_data_idx]
+
             zoom_factor = 1
             if self.digits_sizes != 28:
                 zoom_factor = int(self.digits_sizes[digit_id]/28)
                 digit_image = zoom(digit_image, zoom_factor)
             digit_size = digit_image.shape[0]
 
-            # if self.mode_ == 'squares':
-            #     digit_size = self._rng.randint(5, 20)
-            #     digit_image = np.ones((digit_size, digit_size),
-            #                           dtype=np.float32)
-
             # generate video
             digit_image = np.expand_dims(digit_image, -1)
+            import ipdb; ipdb.set_trace()
             for i in range(self.seq_length+1):
-                top = start_y[i, digit_id]
-                left = start_x[i, digit_id]
+                top = trajectory_y[i, digit_id]
+                left = trajectory_x[i, digit_id]
                 bottom = top + digit_size
                 right = left + digit_size
                 out_sequence[i, top:bottom, left:right, :] = np.maximum(
@@ -205,8 +217,7 @@ class MovingMNISTDataset(ThreadedDataset):
         where the digits are sampled to create the video sequence
         """
         if self.which_set != 'train':
-            self._rng = np.random.RandomState(self.seed)
-            self.vids_indices = range(self.nvids)
+            self._rng = copy.deepcopy(self._origin_rng)
 
     def _fill_names_batches(self, *args, **kwargs):
         # Reset the digit generator at the end of the epoch
@@ -222,17 +233,13 @@ class MovingMNISTDataset(ThreadedDataset):
         labels, their subset (i.e. category, clip, prefix) and their
         filenames.
         """
+        F = []
+        for frame_name, _ in sequence:
+            F.append(frame_name)
         sequence = self._get_sequence()
         X = sequence[:self.seq_length]
-        if self.output_frame == 'middle':
-            Y = sequence[(self.seq_length // 2) + 1]
-            Y = Y[np.newaxis, ...]
-        elif self.output_frame == 'last':
-            Y = sequence[self.seq_length]
-            Y = Y[np.newaxis, ...]
-        elif self.output_frame == 'all':
-            Y = sequence[1:self.seq_length+1]
-        F = self.vids_indices
+        Y = sequence[self.seq_length]
+        Y = Y[np.newaxis, ...]
 
         if self.binarize:
             X[X < 0.8] = 0
