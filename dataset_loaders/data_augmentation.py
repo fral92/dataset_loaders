@@ -425,6 +425,13 @@ def random_transform(x, y=None,
         of sequences) or in the image otherwise. To do so it looks for a
         label called 'background' or 'void' to retrieve the mask id or
         assumes the id of the background mask to be 0.
+    smart_crop_threshold: float in [0, 1]
+        The percentage of background requested in the cropped image. If
+        it is not possible to satisfy this constraint the smart cropping
+        procedure returns the best crop found.
+    smart_crop_search_step: int
+        The amount of displacement in terms of of pixels used to search
+        the best crop.
     smart_crop_random_h_shift_range: int
         The maximum horizontal random shift, in pixels, for 'smart' cropping
     smart_crop_random_v_shift_range: int
@@ -597,6 +604,28 @@ def random_transform(x, y=None,
                                     fill_constant=cval_mask,
                                     rows_idx=rows_idx, cols_idx=cols_idx))
 
+    """ Smart Cropping
+    When the crop is performed in 'smart' mode the image or the frames in a
+    video sequence are cropped trying to satisfy the costraint on the
+    percentage of background pixels in the crop. This allows to crop
+    in the area of the image where the foreground is more concentrated (or not)
+    and to extrapolate parts of a video sequence where the most of the
+    motion happens.
+    In the following heuristic the crop is performed starting by the
+    computation of the foreground mask that contains the foreground
+    pixels in the case of an image and the sum of the foregorund pixels
+    over all the sequence in the case of the video. The crop is first
+    centred in one of the point that has the maximum 'concentration of
+    foreground', then if foreground/background constraint is not
+    satisfied the heuristic searches for another crop center by moving
+    'smart_crop_search_step' in the direction chosen randomly between
+    the possible direction in the remaining quadrants of the image (with
+    respect to the quadrant where the current center is placed). The
+    heuristic terminates when the threshold constraint is satisfied or
+    when the border of the image is reached. If it is not possible to satisfy
+    the fg/bg constraint for tthe current image or video sequence,
+    the heuristic return the best crop found before.
+    """
     if crop_mode == 'smart':
         # Compute a (n-1)D fg/bg binary mask (with nD input)
         if y.shape[-1] == 3:
@@ -607,54 +636,50 @@ def random_transform(x, y=None,
             foreground_mask = np.squeeze(
                 (np.expand_dims(y, -1) > 0).astype(int), axis=-1)
         # Accumulate masks over time
-        if len(foreground_mask.shape) == 2:
-            cumulative_mask = foreground_mask
-        else:
-            cumulative_mask = np.sum(foreground_mask, axis=0)
+        if len(foreground_mask.shape) != 2:
+            foreground_mask = np.sum(foreground_mask, axis=0)
         # Get background concentration in the four quadrants of the mask
         quadrants = []
-        first_half_v = cumulative_mask.shape[0] // 2
-        first_half_h = cumulative_mask.shape[1] // 2
-        cumulative_mask_h = cumulative_mask.shape[0]
-        cumulative_mask_w = cumulative_mask.shape[1]
+        m_height = foreground_mask.shape[0]
+        m_width = foreground_mask.shape[1]
         # Select the four quadrants of mask
-        quadrants.append(cumulative_mask[0:first_half_v,
-                                         0:first_half_h])
+        quadrants.append(foreground_mask[0:m_height // 2,
+                                         0:m_width // 2])
 
-        quadrants.append(cumulative_mask[0:first_half_v,
-                                         first_half_h:cumulative_mask_w])
-        quadrants.append(cumulative_mask[first_half_v:cumulative_mask_h,
-                                         first_half_h:cumulative_mask_w])
-        quadrants.append(cumulative_mask[first_half_v:cumulative_mask_h,
-                                         0:first_half_h])
-        # Compute the max num of background for each quadrant
+        quadrants.append(foreground_mask[0:m_height // 2,
+                                         m_width // 2:m_width])
+        quadrants.append(foreground_mask[m_height // 2:m_height,
+                                         m_width // 2:m_width])
+        quadrants.append(foreground_mask[m_height // 2:m_height,
+                                         0:m_width // 2])
+        # Compute the max num of background pixels for each quadrant
         background_concentrations = []
         for quadrant in quadrants:
             rows, cols = np.where(quadrant == 0)
             background_concentrations.append(len(zip(rows, cols)))
         max_background_quadrant = background_concentrations.index(
             np.max(background_concentrations))
-        quadrant_mask = np.zeros(cumulative_mask.shape, cumulative_mask.dtype)
+        quadrant_mask = np.zeros(foreground_mask.shape, foreground_mask.dtype)
         if max_background_quadrant == 0:
             b_rows, b_cols = np.where(
-                cumulative_mask[0:first_half_v, 0:first_half_h] == 0)
+                foreground_mask[0:m_height // 2, 0:m_width // 2] == 0)
             quadrant_mask[(b_rows, b_cols)] = 1
         elif max_background_quadrant == 1:
-            b_rows, b_cols = np.where(cumulative_mask[0:first_half_v,
-                                      first_half_h:cumulative_mask_w] == 0)
-            quadrant_mask[(b_rows, b_cols + first_half_h)] = 1
+            b_rows, b_cols = np.where(foreground_mask[0:m_height // 2,
+                                      m_width // 2:m_width] == 0)
+            quadrant_mask[(b_rows, b_cols + m_width // 2)] = 1
         elif max_background_quadrant == 2:
             b_rows, b_cols = np.where(
-                cumulative_mask[first_half_v:cumulative_mask_h,
-                                first_half_h:cumulative_mask_w] == 0)
-            quadrant_mask[(b_rows + first_half_v, b_cols + first_half_h)] = 1
+                foreground_mask[m_height // 2:m_height,
+                                m_width // 2:m_width] == 0)
+            quadrant_mask[(b_rows + m_height // 2, b_cols + m_width // 2)] = 1
         else:
             b_rows, b_cols = np.where(
-                cumulative_mask[first_half_v:cumulative_mask_h,
-                                0:first_half_h] == 0)
-            quadrant_mask[(b_rows + first_half_v, b_cols)] = 1
-        max_mask_value = np.max(cumulative_mask)
-        max_rows, max_cols = np.where(cumulative_mask == max_mask_value)
+                foreground_mask[m_height // 2:m_height,
+                                0:m_width // 2] == 0)
+            quadrant_mask[(b_rows + m_height // 2, b_cols)] = 1
+        max_mask_value = np.max(foreground_mask)
+        max_rows, max_cols = np.where(foreground_mask == max_mask_value)
 
     # Crop
     # Expects axes with shape (..., 0, 1)
@@ -713,7 +738,7 @@ def random_transform(x, y=None,
         if crop_mode == 'smart':
             # Search for requested f/b threshold
             background_portion = np.sum(
-                cumulative_mask[top:top+crop[0], left:left+crop[1]] == 0)
+                foreground_mask[top:top+crop[0], left:left+crop[1]] == 0)
             current_threshold = background_portion / np.float(crop[0] *
                                                               crop[1])
             best_top = top
@@ -737,10 +762,7 @@ def random_transform(x, y=None,
                 else:
                     max_top = h - crop[0]
                     search_direction_y = 1
-                i = 0
                 while not best_threshold_found:
-                    i += 1
-                    print('iteration %d' % i)
                     top += search_direction_y * smart_crop_search_step
                     top = max(0, top)
                     top = min(top, h - crop[0])
@@ -749,7 +771,7 @@ def random_transform(x, y=None,
                     left = min(left, w - crop[1])
                     # Search for requested f/b threshold
                     background_portion = np.sum(
-                        cumulative_mask[top:top+crop[0],
+                        foreground_mask[top:top+crop[0],
                                         left:left+crop[1]] == 0)
                     old_threshold = current_threshold
                     current_threshold = background_portion / np.float(crop[0] *
@@ -763,9 +785,6 @@ def random_transform(x, y=None,
                         best_threshold_found = True
                         top = best_top
                         left = best_left
-                print('best threshold: %f' % current_threshold)
-            else:
-                print('best theshold: %f' % current_threshold)
 
         # Cropping
         x = x[..., top:top+crop[0], left:left+crop[1]]
