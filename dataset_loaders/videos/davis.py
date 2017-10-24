@@ -1,3 +1,4 @@
+from __future__ import division
 import os
 import time
 
@@ -62,7 +63,7 @@ class DavisDataset(ThreadedDataset):
         self.threshold_masks = threshold_masks
 
         # Prepare data paths
-        if 'train' in self.which_set or 'val' in self.which_set:
+        if 'train' in self.which_set:  # or 'val' in self.which_set:
             self.split = split
             self.image_path = os.path.join(self.path,
                                            'JPEGImages', '480p',
@@ -70,12 +71,13 @@ class DavisDataset(ThreadedDataset):
             self.mask_path = os.path.join(self.path,
                                           'Annotations', '480p',
                                           'training')
-        elif 'test' in self.which_set:
+            self.split = 1.
+        elif 'test' in self.which_set or 'val' in self.which_set:
             self.image_path = os.path.join(self.path,
                                            'JPEGImages', '480p', 'test')
             self.mask_path = os.path.join(self.path,
                                           'Annotations', '480p', 'test')
-            self.split = 1.
+            self.split = 0.
         else:
             raise RuntimeError('Unknown set')
 
