@@ -328,7 +328,9 @@ def apply_warp(x, warp_field, fill_mode='reflect',
     return x
 
 
-def random_transform(x, y=None,
+def random_transform(dataset,
+                     seq,
+                     prefix_and_fnames=None,
                      rotation_range=0.,
                      width_shift_range=0.,
                      height_shift_range=0.,
@@ -360,10 +362,14 @@ def random_transform(x, y=None,
 
     Parameters
     ----------
-    x: array of floats
-        An image.
-    y: array of int
-        An array with labels.
+    dataset: a :class:`Dataset` instance
+        The instance of the current dataset. First step towards making
+        this a class method.
+    seq: a dictionary of numpy array
+        A dictionary with at least these keys: 'data', 'labels', 'filenames',
+        'subset'.
+    prefix_and_fnames: list
+        A list of prefix and names for the current sequence
     rotation_range: int
         Degrees of rotation (0 to 180).
     width_shift_range: float
@@ -436,15 +442,19 @@ def random_transform(x, y=None,
     '''
     # Set this to a dir, if you want to save augmented images samples
     save_to_dir = None
+    nclasses = dataset.nclasses
+    void_label = dataset.void_labels
 
     if rescale:
         raise NotImplementedError()
 
-    # Do not modify the original images
-    x = x.copy()
-    if y is not None and len(y) > 0:
-        y = y[..., None]  # Add extra dim to y to simplify computation
-        y = y.copy()
+    # Make sure we do not modify the original images
+    seq['data'] = seq['data'].copy()
+    if seq['labels'] is not None and len(seq['labels']) > 0:
+        seq['labels'] = seq['labels'].copy()
+        # Add extra dim to y to simplify computation
+        seq['labels'] = seq['labels'][..., None]
+    sh = seq['data'].shape
 
     # listify zoom range
     if np.isscalar(zoom_range):
@@ -464,13 +474,13 @@ def random_transform(x, y=None,
 
     # Channel shift
     if channel_shift_range != 0:
-        x = random_channel_shift(x, channel_shift_range, rows_idx, cols_idx,
-                                 chan_idx)
+        seq['data'] = random_channel_shift(seq['data'], channel_shift_range,
+                                           rows_idx, cols_idx, chan_idx)
 
     # Gamma correction
     if gamma > 0:
         scale = float(1)
-        x = ((x / scale) ** gamma) * scale * gain
+        seq['data'] = ((seq['data'] / scale) ** gamma) * scale * gain
 
     # Affine transformations (zoom, rotation, shift, ..)
     if (rotation_range or height_shift_range or width_shift_range or
@@ -488,12 +498,12 @@ def random_transform(x, y=None,
         # --> Shift/Translation
         if height_shift_range:
             tx = (np.random.uniform(-height_shift_range, height_shift_range) *
-                  x.shape[rows_idx])
+                  sh[rows_idx])
         else:
             tx = 0
         if width_shift_range:
             ty = (np.random.uniform(-width_shift_range, width_shift_range) *
-                  x.shape[cols_idx])
+                  sh[cols_idx])
         else:
             ty = 0
         translation_matrix = np.array([[1, 0, tx],
@@ -520,62 +530,66 @@ def random_transform(x, y=None,
         transform_matrix = np.dot(np.dot(np.dot(rotation_matrix,
                                                 translation_matrix),
                                          shear_matrix), zoom_matrix)
-        h, w = x.shape[rows_idx], x.shape[cols_idx]
+        h, w = sh[rows_idx], sh[cols_idx]
         transform_matrix = transform_matrix_offset_center(transform_matrix,
                                                           h, w)
         # Apply all the transformations together
-        x = apply_transform(x, transform_matrix, fill_mode=fill_mode,
-                            cval=cval, order=1, rows_idx=rows_idx,
-                            cols_idx=cols_idx)
-        if y is not None and len(y) > 0:
-            y = apply_transform(y, transform_matrix, fill_mode=fill_mode,
-                                cval=cval_mask, order=0, rows_idx=rows_idx,
-                                cols_idx=cols_idx)
+        seq['data'] = apply_transform(seq['data'], transform_matrix,
+                                      fill_mode=fill_mode, cval=cval, order=1,
+                                      rows_idx=rows_idx, cols_idx=cols_idx)
+        if seq['labels'] is not None and len(seq['labels']) > 0:
+            seq['labels'] = apply_transform(seq['labels'],
+                                            transform_matrix,
+                                            fill_mode=fill_mode,
+                                            cval=cval_mask,
+                                            order=0,
+                                            rows_idx=rows_idx,
+                                            cols_idx=cols_idx)
 
     # Horizontal flip
     if np.random.random() < horizontal_flip:  # 0 = disabled
-        x = flip_axis(x, cols_idx)
-        if y is not None and len(y) > 0:
-            y = flip_axis(y, cols_idx)
+        seq['data'] = flip_axis(seq['data'], cols_idx)
+        if seq['labels'] is not None and len(seq['labels']) > 0:
+            seq['labels'] = flip_axis(seq['labels'], cols_idx)
 
     # Vertical flip
     if np.random.random() < vertical_flip:  # 0 = disabled
-        x = flip_axis(x, rows_idx)
-        if y is not None and len(y) > 0:
-            y = flip_axis(y, rows_idx)
+        seq['data'] = flip_axis(seq['data'], rows_idx)
+        if seq['labels'] is not None and len(seq['labels']) > 0:
+            seq['labels'] = flip_axis(seq['labels'], rows_idx)
 
     # Spline warp
     if spline_warp:
         import SimpleITK as sitk
-        warp_field = gen_warp_field(shape=(x.shape[rows_idx],
-                                           x.shape[cols_idx]),
+        warp_field = gen_warp_field(shape=(sh[rows_idx],
+                                           sh[cols_idx]),
                                     sigma=warp_sigma,
                                     grid_size=warp_grid_size)
-        x = apply_warp(x, warp_field,
-                       interpolator=sitk.sitkLinear,
-                       fill_mode=fill_mode,
-                       fill_constant=cval,
-                       rows_idx=rows_idx, cols_idx=cols_idx)
-        if y is not None and len(y) > 0:
-            y = np.round(apply_warp(y, warp_field,
-                                    interpolator=sitk.sitkNearestNeighbor,
-                                    fill_mode=fill_mode,
-                                    fill_constant=cval_mask,
-                                    rows_idx=rows_idx, cols_idx=cols_idx))
+        seq['data'] = apply_warp(seq['data'], warp_field,
+                                 interpolator=sitk.sitkLinear,
+                                 fill_mode=fill_mode, fill_constant=cval,
+                                 rows_idx=rows_idx, cols_idx=cols_idx)
+        if seq['labels'] is not None and len(seq['labels']) > 0:
+            # TODO is this round right??
+            seq['labels'] = np.round(
+                apply_warp(seq['labels'], warp_field,
+                           interpolator=sitk.sitkNearestNeighbor,
+                           fill_mode=fill_mode, fill_constant=cval_mask,
+                           rows_idx=rows_idx, cols_idx=cols_idx))
 
     # Crop
     # Expects axes with shape (..., 0, 1)
     # TODO: Add center crop
     if crop_size:
         # Reshape to (..., 0, 1)
-        pattern = [el for el in range(x.ndim) if el != rows_idx and
+        pattern = [el for el in range(seq['data'].ndim) if el != rows_idx and
                    el != cols_idx] + [rows_idx, cols_idx]
-        inv_pattern = [pattern.index(el) for el in range(x.ndim)]
-        x = x.transpose(pattern)
+        inv_pattern = [pattern.index(el) for el in range(seq['data'].ndim)]
+        seq['data'] = seq['data'].transpose(pattern)
 
         crop = list(crop_size)
         pad = [0, 0]
-        h, w = x.shape[-2:]
+        h, w = seq['data'].shape[-2:]
 
         # Compute amounts
         if crop[0] < h:
@@ -594,26 +608,29 @@ def random_transform(x, y=None,
             left, crop[1] = 0, w
 
         # Cropping
-        x = x[..., top:top+crop[0], left:left+crop[1]]
-        if y is not None and len(y) > 0:
-            y = y.transpose(pattern)
-            y = y[..., top:top+crop[0], left:left+crop[1]]
+        seq['data'] = seq['data'][..., top:top+crop[0], left:left+crop[1]]
+        if seq['labels'] is not None and len(seq['labels']) > 0:
+            seq['labels'] = seq['labels'].transpose(pattern)
+            seq['labels'] = seq['labels'][..., top:top+crop[0],
+                                          left:left+crop[1]]
         # Padding
         if pad != [0, 0]:
-            pad_pattern = ((0, 0),) * (x.ndim - 2) + (
+            pad_pattern = ((0, 0),) * (seq['data'].ndim - 2) + (
                 (pad[0]//2, pad[0] - pad[0]//2),
                 (pad[1]//2, pad[1] - pad[1]//2))
-            x = np.pad(x, pad_pattern, 'constant')
-            y = np.pad(y, pad_pattern, 'constant', constant_values=void_label)
+            seq['data'] = np.pad(seq['data'], pad_pattern, 'constant')
+            seq['labels'] = np.pad(seq['labels'], pad_pattern, 'constant',
+                                   constant_values=void_label)
 
-        x = x.transpose(inv_pattern)
-        if y is not None and len(y) > 0:
-            y = y.transpose(inv_pattern)
+        # Reshape to original shape
+        seq['data'] = seq['data'].transpose(inv_pattern)
+        if seq['labels'] is not None and len(seq['labels']) > 0:
+            seq['labels'] = seq['labels'].transpose(inv_pattern)
 
     if return_optical_flow:
-        flow = optical_flow(x, rows_idx, cols_idx, chan_idx,
+        flow = optical_flow(seq['data'], rows_idx, cols_idx, chan_idx,
                             return_rgb=return_optical_flow == 'rgb')
-        x = np.concatenate((x, flow), axis=chan_idx)
+        seq['data'] = np.concatenate((seq['data'], flow), axis=chan_idx)
 
     # Save augmented images
     if save_to_dir:
@@ -621,11 +638,9 @@ def random_transform(x, y=None,
         fname = 'data_augm_{}.png'.format(np.random.randint(1e4))
         print ('Save to dir'.format(fname))
         cmap = sns.hls_palette(nclasses)
-        save_img2(x, y, os.path.join(save_to_dir, fname),
+        save_img2(seq['data'], seq['labels'], os.path.join(save_to_dir, fname),
                   cmap, void_label, rows_idx, cols_idx, chan_idx)
 
     # Undo extra dim
-    if y is not None and len(y) > 0:
-        y = y[..., 0]
-
-    return x, y
+    if seq['labels'] is not None and len(seq['labels']) > 0:
+        seq['labels'] = seq['labels'][..., 0]

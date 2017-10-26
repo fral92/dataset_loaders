@@ -598,9 +598,9 @@ class ThreadedDataset(object):
         batch_ret = {}
 
         # Create batches
-        for el in batch_to_load:
+        for prefix_and_fnames in batch_to_load:
 
-            if el is None:
+            if prefix_and_fnames is None:
                 # The first element cannot be None, or we wouldn't have
                 # this batch in the first place, so we can safely copy
                 # the last element of the batch for each filename that
@@ -611,45 +611,43 @@ class ThreadedDataset(object):
                 continue
 
             # Load sequence, format is (s, 0, 1, c)
-            ret = self.load_sequence(el)
-            assert all(el in ret.keys()
+            seq = self.load_sequence(prefix_and_fnames)
+
+            # Verify consistency
+            assert all(el in seq.keys()
                        for el in ('data', 'labels', 'filenames', 'subset')), (
-                    'Keys: {}'.format(ret.keys()))
+                    'Keys: {}'.format(seq.keys()))
             assert all(isinstance(el, np.ndarray)
-                       for el in (ret['data'], ret['labels']))
-            raw_data = ret['data'].copy()
-            seq_x, seq_y = ret['data'], ret['labels']
+                       for el in (seq['data'], seq['labels']))
+
+            seq['raw_data'] = seq['data'].copy()
 
             # Per-image normalization
+            axis = tuple(range(seq['data'].ndim - 1))
             if self.remove_per_img_mean:
-                seq_x -= seq_x.mean(axis=tuple(range(seq_x.ndim - 1)),
-                                    keepdims=True)
+                seq['data'] -= seq['data'].mean(axis=axis, keepdims=True)
             if self.divide_by_per_img_std:
-                seq_x /= seq_x.std(axis=tuple(range(seq_x.ndim - 1)),
-                                   keepdims=True)
+                seq['data'] /= seq['data'].std(axis=axis, keepdims=True)
             # Dataset statistics normalization
             if self.remove_mean:
-                seq_x -= getattr(self, 'mean', 0)
+                seq['data'] -= getattr(self, 'mean', 0)
             if self.divide_by_std:
-                seq_x /= getattr(self, 'std', 1)
+                seq['data'] /= getattr(self, 'std', 1)
 
             # Make sure data is in 4D
-            if seq_x.ndim == 3:
-                seq_x = seq_x[np.newaxis, ...]
-                raw_data = raw_data[np.newaxis, ...]
-            assert seq_x.ndim == 4
+            if seq['data'].ndim == 3:
+                seq['data'] = seq['data'][np.newaxis, ...]
+                seq['raw_data'] = seq['raw_data'][np.newaxis, ...]
+            assert seq['data'].ndim == 4
             # and labels in 3D
             if self.set_has_GT:
-                if seq_y.ndim == 2:
-                    seq_y = seq_y[np.newaxis, ...]
-                assert seq_y.ndim == 3
+                if seq['labels'].ndim == 2:
+                    seq['labels'] = seq['labels'][np.newaxis, ...]
+                assert seq['labels'].ndim == 3
 
             # Perform data augmentation, if needed
-            seq_x, seq_y = random_transform(
-                seq_x, seq_y,
-                nclasses=self.nclasses,
-                void_label=self.void_labels,
-                **self.data_augm_kwargs)
+            random_transform(self, seq, prefix_and_fnames,
+                             **self.data_augm_kwargs)
 
             if self.set_has_GT and self._void_labels != []:
                 # Map all void classes to non_void_nclasses and shift the other
@@ -663,52 +661,56 @@ class ThreadedDataset(object):
                 # Apply the mapping
                 tmp_class = (-1 if not hasattr(self, 'GTclasses') else
                              max(self.GTclasses) + 1)
-                seq_y[seq_y == self.non_void_nclasses] = tmp_class
+                loc = seq['labels'] == self.non_void_nclasses
+                seq['labels'][loc] = tmp_class
                 for i in sorted(mapping.keys()):
                     if i == self.non_void_nclasses:
                         continue
-                    seq_y[seq_y == i] = mapping[i]
+                    seq['labels'][seq['labels'] == i] = mapping[i]
                 try:
-                    seq_y[seq_y == tmp_class] = mapping[self.non_void_nclasses]
+                    loc = seq['labels'] == tmp_class
+                    seq['labels'][loc] = mapping[self.non_void_nclasses]
                 except KeyError:
                     # none of the original classes was self.non_void_nclasses
                     pass
 
-            # Transform targets seq_y to one hot code if return_one_hot
+            # Transform targets seq['labels'] to one hot code if return_one_hot
             # is True
             if self.set_has_GT and self.return_one_hot:
                 nc = (self.non_void_nclasses if self._void_labels == [] else
                       self.non_void_nclasses + 1)
-                sh = seq_y.shape
-                seq_y = seq_y.flatten()
-                seq_y_hot = np.zeros((seq_y.shape[0], nc),
-                                     dtype='int32')
-                seq_y = seq_y.astype('int32')
-                seq_y_hot[range(seq_y.shape[0]), seq_y] = 1
+                sh = seq['labels'].shape
+                seq_y_flat = seq['labels'].flatten()
+                seq_y_hot = np.zeros((seq_y_flat.shape[0], nc), dtype='int32')
+                seq_y_flat = seq_y_flat.astype('int32')
+                seq_y_hot[range(seq_y_flat.shape[0]), seq_y_flat] = 1
                 seq_y_hot = seq_y_hot.reshape(sh + (nc,))
-                seq_y = seq_y_hot
+                seq['labels'] = seq_y_hot
 
             # Dimshuffle if return_01c is False
             if not self.return_01c:
                 # s,0,1,c --> s,c,0,1
-                seq_x = seq_x.transpose([0, 3, 1, 2])
+                seq['data'] = seq['data'].transpose([0, 3, 1, 2])
                 if self.set_has_GT and self.return_one_hot:
-                    seq_y = seq_y.transpose([0, 3, 1, 2])
-                raw_data = raw_data.transpose([0, 3, 1, 2])
+                    seq['labels'] = seq['labels'].transpose([0, 3, 1, 2])
+                seq['raw_data'] = seq['raw_data'].transpose([0, 3, 1, 2])
 
             # Return 4D images
             if not self.return_sequence:
-                seq_x = seq_x[0, ...]
+                seq['data'] = seq['data'][0, ...]
                 if self.set_has_GT:
-                    seq_y = seq_y[0, ...]
-                raw_data = raw_data[0, ...]
+                    seq['labels'] = seq['labels'][0, ...]
+                seq['raw_data'] = seq['raw_data'][0, ...]
 
             if self.return_0_255:
-                seq_x = (seq_x * 255).astype('uint8')
-            ret['data'], ret['labels'] = seq_x, seq_y
-            ret['raw_data'] = raw_data
+                seq['data'] = (seq['data'] * 255).astype('uint8')
+
+            # Make sure we are updating the seq array with all the
+            # modifications
+            seq['data'], seq['labels'] = seq['data'], seq['labels']
+
             # Append the data of this batch to the minibatch array
-            for k, v in ret.iteritems():
+            for k, v in seq.iteritems():
                 batch_ret.setdefault(k, []).append(v)
 
         for k, v in batch_ret.iteritems():
