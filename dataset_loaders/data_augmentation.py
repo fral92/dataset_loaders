@@ -744,3 +744,155 @@ def random_transform(dataset,
 
     if return_optical_flow:
         seq['flow'] = np.array(flow)
+
+
+def flow2rgb(flow, frame=None, show_flow_vector_field=False):
+    '''
+    Convert optical flow to RGB image
+    From:
+    https://github.com/stefanoalletto/TransFlow/blob/master/
+    flowToColor.pyeadapted from
+    '''
+    if len(flow.shape) != 3 or flow.shape[2] != 2:
+        raise ValueError('The flow should be an array (x, y, c) with c '
+                         'containing the 2D displacement.')
+
+    u = flow[:, :, 0]
+    v = flow[:, :, 1]
+    # print u.shape,v.shape
+    maxu = -999.
+    maxv = -999.
+    minu = 999.
+    minv = 999.
+    maxrad = -1.
+
+    maxu = max(maxu, np.max(u))
+    minu = max(minu, np.max(u))
+    maxv = max(maxv, np.max(v))
+    minv = max(minv, np.max(v))
+    rad = np.sqrt((u ** 2. + v ** 2.))
+    maxrad = max(maxrad, np.max(rad))
+    u = u / (maxrad + 1e-5)
+    v = v / (maxrad + 1e-5)
+    if show_flow_vector_field:
+        mag, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+        img = drawVectorField(frame, mag, rad)
+    else:
+        img = computeColor(u, v)
+        img = img / 255.
+    # % unknown flow
+    # IDX = np.repmat(idxUnknown, np.array(np.hstack((1., 1., 3.))))
+    # img[int(IDX)-1] = 0.
+    # return img/255.
+    return img
+
+def drawVectorField(frame, mag, rad):
+    magnitude_hsv = np.zeros(shape=rad.shape + tuple([3]))
+    magnitude_hsv[..., 2] = np.clip(mag, 0, 10) / 10.
+    # magnitude_rgb[..., indice / numero di righe
+    # for i in range(480):
+    #     magnitude_hsv[i, :, 2] = i / 480.
+    # magnitude_rgb[..., 1] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+    # magnitude_rgb[..., 2] = np.expand_dims(mag, axis=-1)[..., 0]
+    magnitude_rgb = cv2.cvtColor(np.uint8(magnitude_hsv * 255),
+                                 cv2.COLOR_HSV2RGB)
+    magnitude_rgb[..., 1] = 255
+
+    white_background = np.ones_like(frame) * 255
+    cv2.addWeighted(frame, 0.4, white_background, 0.6, 0,
+                    white_background)
+
+    height = rad.shape[0]
+    width = rad.shape[1]
+
+    divisor = 12
+    vector_length = 10
+
+    for i in range(height / divisor):
+        for j in range(width / divisor):
+            y1 = i * divisor
+            x1 = j * divisor
+            vector_length = magnitude_hsv[y1, x1, 2] * 10
+            dy = vector_length * np.sin(rad[y1, x1])
+            dx = vector_length * np.cos(rad[y1, x1])
+            x2 = int(x1 + dx)
+            y2 = int(y1 + dy)
+            x2 = np.clip(x2, 0, width)
+            y2 = np.clip(y2, 0, height)
+            arrow_color = magnitude_rgb[y1, x1].tolist()
+            white_background = cv2.arrowedLine(
+                white_background, (x1, y1), (x2, y2),
+                arrow_color, 1, tipLength=0.4)
+    return white_background
+
+def computeColor(u, v):
+    img = np.zeros((u.shape[0], u.shape[1], 3))
+    # nanIdx = np.logical_or(np.isnan(u), np.isnan(v))
+    # u[int(nanIdx)-1] = 0.
+    # v[int(nanIdx)-1] = 0.
+    colorwheel, ncols = makeColorwheel()
+    rad = np.sqrt((u ** 2. + v ** 2.))
+    a = np.arctan2((-v), (-u)) / np.pi
+    fk = np.dot((a + 1.) / 2., ncols - 1.)
+    # % -1~1 maped to 1~ncols
+    k0 = np.floor(fk).astype(np.int32)
+    # % 1, 2, ..., ncols
+    k1 = k0 + 1
+    k1[k1 == ncols] = 1
+    f = fk - k0
+
+    for i in np.arange(colorwheel.shape[-1]):
+        tmp = colorwheel[:, i]
+        col0 = tmp[k0] / 255.
+        col1 = tmp[k1] / 255.
+        col = (1. - f) * col0 + f * col1
+        idx = rad <= 1.
+        col[idx] = 1. - rad[idx] * (1. - col[idx])
+        # % increase saturation with radius
+        col[rad > 1] = col[rad > 1] * 0.75
+        # % out of range
+        img[:, :, i] = np.floor(255. * col)
+    return img
+
+def makeColorwheel():
+
+    RY = 15
+    YG = 6
+    GC = 4
+    CB = 11
+    BM = 13
+    MR = 6
+    ncols = RY+YG+GC+CB+BM+MR
+    colorwheel = np.zeros((int(ncols), 3))
+    # % r g b
+    col = 0
+    # %RY
+    colorwheel[0:RY, 0] = 255.
+    colorwheel[0:RY, 1] = np.floor(255. * np.arange(0., RY) / RY)
+    col = col + RY
+    # %YG
+    colorwheel[col:col+YG, 0] = 255. - np.floor(
+        255. * np.arange(0., YG) / YG)
+    colorwheel[col:col+YG, 1] = 255.
+    col = col + YG
+    # %GC
+    colorwheel[col+0:col+GC, 1] = 255.
+    colorwheel[col+0:col+GC, 2] = np.floor(255. * np.arange(0., GC) /
+                                           GC)
+    col = col + GC
+    # %CB
+    colorwheel[col+0:col+CB, 1] = 255. - np.floor(
+        255. * np.arange(0., CB) / CB)
+    colorwheel[col+0:col+CB, 2] = 255.
+    col = col + CB
+    # %BM
+    colorwheel[col+0:col+BM, 2] = 255.
+    colorwheel[col+0:col+BM, 0] = np.floor(255. * np.arange(0., BM) /
+                                           BM)
+    col = col + BM
+    # %MR
+    colorwheel[col+0:col+MR, 2] = 255. - np.floor(
+        255. * np.arange(0., MR) / MR)
+    colorwheel[col+0:col+MR, 0] = 255.
+    return colorwheel, ncols
+
