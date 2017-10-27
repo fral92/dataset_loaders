@@ -624,7 +624,6 @@ def random_transform(dataset,
             farn_optical_flow(dataset)  # Compute and store on disk
 
         # Load the OF from disk
-        import skimage
         flow = []
         for frame in prefix_and_fnames:
             if frame[1] == first_frame_of_prefix:
@@ -634,41 +633,17 @@ def random_transform(dataset,
                 flow.append(of)
                 continue
 
-            # Read from disk
+            # Read the OF from disk
             of_path = os.path.join(of_base_path, frame[0],
                                    frame[1].rstrip('.') + '.npy')
-            if os.path.exists(of_path):
-                of = np.load(of_path)
-            else:
-                raise RuntimeError('Optical flow not found for this '
-                                   'file: %s' % of_path)
+            if not os.path.exists(of_path):
+                raise RuntimeError('Optical flow not found for this file: %s' %
+                                   of_path)
+            of = np.load(of_path)
 
             if return_optical_flow == 'rgb':
-                # of = of[..., ::-1]
-
-                def cart2pol(x, y):
-                    mag = np.sqrt(x**2 + y**2)
-                    ang = np.arctan2(y, x)  # note, in [-pi, pi]
-                    return mag, ang
-                mag, ang = cart2pol(of[..., 0], of[..., 1])
-
-                # Normalize to [0, 1]
-                sh = of.shape[:2]
-                two_pi = 2 * np.pi
-                ang = (ang + two_pi) % two_pi / two_pi
-                mag = mag - mag.min()
-                mag /= np.float(mag.max())
-
-                # Convert to RGB [0, 1]
-                hsv = np.ones((sh[0], sh[1], 3))
-                hsv[..., 0] = ang
-                hsv[..., 2] = mag
-                of = skimage.color.hsv2rgb(hsv)  # HSV --> RGB [0, 1]
-                of = (of * 255).astype('uint8')
-                from PIL import Image
-                import ipdb; ipdb.set_trace()
-                Image.fromarray(of).show()
-
+                of = of[..., ::-1]  # go (dx, dy) as expected by openCV
+                of = flow2rgb(of, return_0_255=True)
             flow.append(np.array(of))
         flow = np.array(flow)
 
@@ -751,6 +726,33 @@ def cart2polar(x, y):
     mag = np.sqrt(x**2 + y**2)
     ang = np.arctan2(y, x)  # note, in [-pi, pi]
     return mag, ang
+
+
+def flow2rgb_np(flow):
+    '''
+    Convert optical flow to RGB image
+
+    Parameters
+    ----------
+    flow: ndarray
+        A 3D array with the X, Y displacement per pixel
+    '''
+    import skimage
+    mag, ang = cart2polar(flow[..., 0], flow[..., 1])
+
+    # Normalize to [0, 1]
+    sh = flow.shape[:2]
+    two_pi = 2 * np.pi
+    ang = (ang + two_pi) % two_pi / two_pi
+    mag = mag - mag.min()
+    mag /= np.float(mag.max())
+
+    # Convert to RGB [0, 1]
+    hsv = np.ones((sh[0], sh[1], 3))
+    hsv[..., 0] = ang
+    hsv[..., 2] = mag
+    of = skimage.color.hsv2rgb(hsv)  # HSV --> RGB [0, 1]
+    of = (of * 255).astype('uint8')
 
 
 def flow2rgb(flow, frame=None, return_vec_field=False, return_0_255=True):
