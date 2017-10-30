@@ -25,7 +25,7 @@ At the moment the only optical flow algorithm supported to this end is the
 Farneback (requires openCV installed, choose 'Farn' as type), but you can
 easily pre-compute the optical flow with your preferred algorithm and then load
 it via the dataset loaders. An example code for a few algorithms is provided
-[here](https://gist.github.com/marcociccone/593638e932a48df7cfd0afe71052ef1d).
+[here](https://github.com/marcociccone/opencv_of_gpu).
 NO SUPPORT WILL BE PROVIDED FOR THIS CODE OR ANY OTHER OPTICAL FLOW CODE NOT
 DIRECTLY INTEGRATED IN THIS FRAMEWORK.
 
