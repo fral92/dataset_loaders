@@ -34,9 +34,17 @@ class Davis2017Dataset(ThreadedDataset):
         if self._prefix_list is None:
             which_set = ('test-dev' if self.which_set == 'test' else
                          self.which_set)
+            if self.dataset_version == '2016_augm_train':
+                txt_file = 'augm_train'
+            elif self.dataset_version == '2016_augm_partial_valid':
+                txt_file = 'augm_partial_valid'
+            elif self.dataset_version == '2016_augm_valid':
+                txt_file = 'augm_valid'
+            else:
+                txt_file = which_set
             # Create a list of prefix out of the number of requested videos
             with open(os.path.join(self._image_sets_path,
-                                   which_set + '.txt')) as f:
+                                   txt_file + '.txt')) as f:
                 content = f.readlines()
                 f.close()
             self._prefix_list = [prefix.strip() for prefix in content]
@@ -116,10 +124,17 @@ class Davis2017Dataset(ThreadedDataset):
             raise ValueError("Unknown set {}".format(which_set))
         self.which_set = 'val' if which_set == 'valid' else which_set
         self.foreground_background = foreground_background
-        if dataset_version not in ['2016', '2017']:
+        if dataset_version not in ['2016', '2016_augm_train',
+                                   '2016_augm_partial_valid',
+                                   '2016_augm_valid', '2017']:
             raise RuntimeError('Unknown dataset version')
+        self.dataset_version = dataset_version
+        if '2016' in dataset_version:
+            year = '2016'
+        elif '2017' in dataset_version:
+            year = '2017'
         self._image_sets_path = os.path.join(self.path, 'ImageSets',
-                                             dataset_version)
+                                             year)
         self.image_path = os.path.join(self.path,
                                        'JPEGImages', '480p')
         self.mask_path = os.path.join(self.path,
@@ -194,50 +209,50 @@ def test():
     use_threads = True
     trainiter = Davis2017Dataset(
         which_set='train',
-        dataset_version='2017',
-        batch_size=2,
+        dataset_version='2016_augm_valid',
+        batch_size=1,
         seq_per_subset=0,
         seq_length=7,
         overlap=0,
         data_augm_kwargs={'crop_size': None},
-        foreground_background=False,
+        foreground_background=True,
         return_one_hot=False,
         return_01c=True,
         use_threads=use_threads,
         nthreads=3,
         shuffle_at_each_epoch=True)
-    validiter = Davis2017Dataset(
-        which_set='valid',
-        dataset_version='2017',
-        batch_size=2,
-        seq_per_subset=0,
-        seq_length=7,
-        overlap=0,
-        foreground_background=True,
-        return_one_hot=False,
-        return_01c=True,
-        use_threads=use_threads,
-        shuffle_at_each_epoch=False)
-    testiter = Davis2017Dataset(
-        which_set='test',
-        dataset_version='2017',
-        batch_size=1,
-        seq_per_subset=0,
-        seq_length=1,
-        overlap=0,
-        foreground_background=True,
-        return_one_hot=False,
-        return_01c=True,
-        shuffle_at_each_epoch=False,
-        use_threads=use_threads)
+    # validiter = Davis2017Dataset(
+    #     which_set='valid',
+    #     dataset_version='2017',
+    #     batch_size=2,
+    #     seq_per_subset=0,
+    #     seq_length=7,
+    #     overlap=0,
+    #     foreground_background=True,
+    #     return_one_hot=False,
+    #     return_01c=True,
+    #     use_threads=use_threads,
+    #     shuffle_at_each_epoch=False)
+    # testiter = Davis2017Dataset(
+    #     which_set='test',
+    #     dataset_version='2017',
+    #     batch_size=1,
+    #     seq_per_subset=0,
+    #     seq_length=1,
+    #     overlap=0,
+    #     foreground_background=True,
+    #     return_one_hot=False,
+    #     return_01c=True,
+    #     shuffle_at_each_epoch=False,
+    #     use_threads=use_threads)
 
     train_nsamples = trainiter.nsamples
-    valid_nsamples = validiter.nsamples
-    test_nsamples = testiter.nsamples
+    # valid_nsamples = validiter.nsamples
+    # test_nsamples = testiter.nsamples
     nbatches = trainiter.nbatches
 
-    print("Train %d, valid %d, test %d" % (train_nsamples, valid_nsamples,
-                                           test_nsamples))
+    # print("Train %d, valid %d, test %d" % (train_nsamples, valid_nsamples,
+    #                                        test_nsamples))
 
     start = time.time()
     tot = 0
@@ -246,11 +261,12 @@ def test():
     for epoch in range(max_epochs):
         for mb in range(nbatches):
             train_group = trainiter.next()
-            valid_group = validiter.next()
-            test_group = testiter.next()
-            if train_group is None or valid_group is None or \
-               test_group is None:
-                raise ValueError('.next() returned None!')
+            import ipdb; ipdb.set_trace()
+            # valid_group = validiter.next()
+            # test_group = testiter.next()
+            # if train_group is None or valid_group is None or \
+            #    test_group is None:
+            #     raise ValueError('.next() returned None!')
 
             # time.sleep approximates running some model
             time.sleep(1)
