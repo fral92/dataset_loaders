@@ -34,9 +34,17 @@ class Davis2017Dataset(ThreadedDataset):
         if self._prefix_list is None:
             which_set = ('test-dev' if self.which_set == 'test' else
                          self.which_set)
+            if self.dataset_version == '2016_augm_train':
+                txt_file = 'augm_train'
+            elif self.dataset_version == '2016_augm_partial_valid':
+                txt_file = 'augm_partial_valid'
+            elif self.dataset_version == '2016_augm_valid':
+                txt_file = 'augm_valid'
+            else:
+                txt_file = which_set
             # Create a list of prefix out of the number of requested videos
             with open(os.path.join(self._image_sets_path,
-                                   which_set + '.txt')) as f:
+                                   txt_file + '.txt')) as f:
                 content = f.readlines()
                 f.close()
             self._prefix_list = [prefix.strip() for prefix in content]
@@ -116,10 +124,17 @@ class Davis2017Dataset(ThreadedDataset):
             raise ValueError("Unknown set {}".format(which_set))
         self.which_set = 'val' if which_set == 'valid' else which_set
         self.foreground_background = foreground_background
-        if dataset_version not in ['2016', '2017']:
+        if dataset_version not in ['2016', '2016_augm_train',
+                                   '2016_augm_partial_valid',
+                                   '2016_augm_valid', '2017']:
             raise RuntimeError('Unknown dataset version')
+        self.dataset_version = dataset_version
+        if '2016' in dataset_version:
+            year = '2016'
+        elif '2017' in dataset_version:
+            year = '2017'
         self._image_sets_path = os.path.join(self.path, 'ImageSets',
-                                             dataset_version)
+                                             year)
         self.image_path = os.path.join(self.path,
                                        'JPEGImages', '480p')
         self.mask_path = os.path.join(self.path,
